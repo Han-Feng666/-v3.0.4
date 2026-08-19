@@ -1,0 +1,243 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+
+    <!-- Fork server 用的 Shizuku 客户端权限认证。server 端 BinderSender.sendBinder 通过此权限识别客户端 -->
+    <uses-permission android:name="com.HanFeng.permission.shizuku.API_V23" />
+    <!-- 官方 SDK dev.rikka.shizuku:provider 旧版本兼容 (server 端同时识别官方包名) -->
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+    <!-- Manager 权限 (主 app 既是客户端也是宿主管理端,声明避免子模块 Provider 配置不通过) -->
+    <uses-permission android:name="com.HanFeng.permission.shizuku.MANAGER" />
+
+    <application
+        android:name="com.HanFeng.HanFengApp"
+        android:allowBackup="true"
+        android:extractNativeLibs="true"
+        android:largeHeap="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.HanFengAdBlock"
+        android:usesCleartextTraffic="true"
+        tools:targetApi="31">
+
+        <activity
+            android:name="com.HanFeng.ui.WhitelistActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.LocalProxyCoexistActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.SettingsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.ShizukuPermissionManageActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.HostsEditorActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.RootScriptActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.RootTerminalActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.RootHideActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.ShizukuEnhanceAppsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.RemoteRuleSourcesActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.ImpactNormalNetworkActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.PromoGovernScopeActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.AppFreezeActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.GameAntiMarkActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.GamePackageListActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.RewardActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.PromoComponentGovernActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.GuideActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.RunningAppsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.FloatingBallSettingsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.RankingDetailActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.SuspiciousDomainsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.DecisionDomainsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name="com.HanFeng.service.AdBlockVpnService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="vpn-ad-block" />
+        </service>
+
+        <service
+            android:name="com.HanFeng.shizuku.ShizukuAdControlUserService"
+            android:enabled="true"
+            android:exported="false"
+            android:process=":shizuku_ad_control"
+            tools:ignore="Instantiatable" />
+
+        <service
+            android:name="com.HanFeng.shizuku.ConnectionOwnerUserService"
+            android:enabled="true"
+            android:exported="false"
+            android:process=":shizuku_conn_owner"
+            tools:ignore="Instantiatable" />
+
+        <service
+            android:name="com.HanFeng.service.WirelessDebugFloatingService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="wireless-pairing-overlay" />
+        </service>
+
+        <receiver
+            android:name="com.HanFeng.service.VpnAutoRestartReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="com.HanFeng.RECOVER" />
+            </intent-filter>
+        </receiver>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            tools:node="remove" />
+
+        <provider
+            android:name="moe.shizuku.manager.ShizukuManagerProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <service
+            android:name="com.HanFeng.service.FloatingBallService"
+            android:exported="false" />
+
+        <!-- 实时广告通知拦截，需用户系统设置中授予"通知访问权限"后才会触发 -->
+        <service
+            android:name="com.HanFeng.service.AdNotificationListenerService"
+            android:label="广告通知拦截"
+            android:exported="false"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- 下拉通知栏快捷设置磁贴,快捷开关广告拦截 -->
+        <service
+            android:name="com.HanFeng.service.AdBlockTileService"
+            android:label="广告拦截"
+            android:icon="@drawable/ic_ad_block_tile"
+            android:exported="true"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+    </application>
+
+</manifest>
