@@ -1,0 +1,20 @@
+{
+  "friendly": "相机",
+  "call": [
+    ["@limiter", "NONE"]
+  ],
+  "state": {
+    "active": [
+      ["@cpu_freq", "policy0", "1000MHz", "1800MHz"],
+      ["@cpu_freq", "policy2", "1400MHz", "2800MHz"],
+      ["@cpu_freq", "policy5", "1190MHz", "1190MHz"],
+      ["@cpu_freq", "policy7", "1400MHz", "2800MHz"]
+    ],
+    "inactive": [
+      ["@cpu_freq", "policy0", "min", "1000MHz"],
+      ["@cpu_freq", "policy2", "min", "1400MHz"],
+      ["@cpu_freq", "policy5", "min", "1190MHz"],
+      ["@cpu_freq", "policy7", "min", "1400MHz"]
+    ]
+  }
+}

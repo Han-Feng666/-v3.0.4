@@ -443,7 +443,8 @@ const val PREFS_NAME = "floating_ball_prefs"
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!isDragging) {
-                        openMainActivity()
+                        // 单击悬浮球直接切换弱网开/关（设计决策：不再打开主界面）
+                        toggleWeakNetwork()
                     }
                     v.performClick()
                     true
@@ -459,6 +460,17 @@ const val PREFS_NAME = "floating_ball_prefs"
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             startActivity(intent)
+        }
+    }
+
+    private fun toggleWeakNetwork() {
+        runCatching {
+            val next = com.HanFeng.data.WeakNetworkController.toggle(this)
+            com.HanFeng.data.LogRepository.append(
+                this,
+                "Floating ball toggled weak network enabled=$next"
+            )
+            handler.post { refreshContent() }
         }
     }
 
@@ -481,6 +493,17 @@ const val PREFS_NAME = "floating_ball_prefs"
     }
 
     private fun computeDisplay(dataType: String): Pair<String, String> {
+        // 弱网生效时优先展示弱网状态，避免用户在测试弱网时被其它指标误导
+        if (WeakNetworkEngine.isActive()) {
+            val params = WeakNetworkEngine.parameters()
+            val parts = mutableListOf<String>()
+            if (params.latencyMs > 0) parts.add("延迟${params.latencyMs}ms")
+            if (params.lossPercent > 0) parts.add("丢包${params.lossPercent}%")
+            if (params.downKbps > 0 || params.upKbps > 0) {
+                parts.add("限速${kotlin.math.max(params.downKbps, params.upKbps)}kbps")
+            }
+            return "弱网" to (parts.joinToString(" ").ifEmpty { "已开启" })
+        }
         val running = runCatching { NetworkKernel.isRunning() }.getOrDefault(false)
         return when (dataType) {
             DATA_MEMORY_CPU -> {

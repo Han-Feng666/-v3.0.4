@@ -15,6 +15,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.HanFeng.R
 import com.HanFeng.model.InstalledApp
+import com.HanFeng.data.RuleRepository
 import com.HanFeng.data.WhitelistRepository
 import com.HanFeng.databinding.ActivityWhitelistBinding
 import kotlinx.coroutines.Dispatchers
@@ -205,6 +206,7 @@ class WhitelistActivity : BaseActivity() {
     }
 
     private fun scheduleVpnReload() {
+        RuleRepository.clearWhitelistDomainCache()
         pendingReloadJob?.cancel()
         pendingReloadJob = lifecycleScope.launch {
             delay(350)

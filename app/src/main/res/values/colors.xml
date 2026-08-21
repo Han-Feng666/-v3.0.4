@@ -36,4 +36,26 @@
     <color name="hf_button_primary_text">#FFFFFFFF</color>
     <color name="hf_button_secondary">#33000000</color>
     <color name="hf_button_secondary_text">#DE000000</color>
+
+    <!-- Liquid Glass palette
+         控件规范：透明填充(3%白底)、细长斜向反光(≤12%)、冷蓝轮廓高光(0.5dp/6%)、投影(Y2/4%) -->
+    <color name="hf_glass_top">#00000000</color>
+    <color name="hf_glass_mid">#00000000</color>
+    <color name="hf_glass_bottom">#00000000</color>
+    <!-- 玻璃体填充：白 18%，保证复杂背景上仍能看清控件边界与文字 -->
+    <color name="hf_glass_fill">#2EFFFFFF</color>
+    <!-- 边缘反光：白 38%，用于描边和边缘高光 -->
+    <color name="hf_glass_highlight">#61FFFFFF</color>
+    <!-- 轮廓冷蓝 34%，形成液态玻璃边缘反光 -->
+    <color name="hf_glass_stroke">#57A6D8FF</color>
+    <!-- 次级轮廓冷蓝 22% -->
+    <color name="hf_glass_stroke_dim">#38A6D8FF</color>
+    <!-- 内侧暗部，增强玻璃体厚度 -->
+    <color name="hf_glass_inner_shadow">#1A000000</color>
+    <color name="hf_glass_sheen">#4DFFFFFF</color>
+    <color name="hf_glass_primary_top">#FF5B8DF0</color>
+    <color name="hf_glass_primary_mid">#FF3D74E0</color>
+    <color name="hf_glass_primary_bottom">#FF2A5BC7</color>
+    <!-- 环境阴影（弹窗） -->
+    <color name="hf_glass_shadow_dark">#14000000</color>
 </resources>

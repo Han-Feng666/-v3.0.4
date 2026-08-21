@@ -86,10 +86,19 @@ open class BaseActivity : AppCompatActivity() {
         }
     }
 
+    protected fun applyBaseBackground() {
+        ensureAppBackground()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val hideBackgroundEnabled = AppSettingsRepository.isHideBackgroundEnabled(this)
         applyHideBackgroundPolicyIfNeeded(hideBackgroundEnabled)
+    }
+
+    override fun onPostCreate(savedInstanceState: Bundle?) {
+        super.onPostCreate(savedInstanceState)
+        applyBaseBackground()
     }
 
     override fun onStart() {

@@ -67,19 +67,20 @@ class SettingsActivity : BaseActivity() {
     private lateinit var textCustomTrackingParamsPreview: TextView
     private lateinit var btnManageCustomTrackingHeaders: Button
     private lateinit var textCustomTrackingHeadersPreview: TextView
-    private lateinit var btnShizukuPermissionManage: Button
     private lateinit var btnShizukuAdControl: Button
     private lateinit var btnAppFreeze: Button
-    private lateinit var btnGameAntiMark: Button
-    private lateinit var btnCoexistSettings: Button
-    private lateinit var btnTrafficCardSettings: Button
-    private lateinit var btnJoinGroupSettings: Button
-    private lateinit var btnResetHideBackground: Button
-    private lateinit var btnExportLogs: Button
-    private lateinit var btnExportRules: Button
+private lateinit var btnGameAntiMark: Button
+    private lateinit var btnPerformanceTuner: Button
+    private lateinit var btnAppOpt: Button
     private lateinit var btnRewardDeveloper: Button
     private lateinit var btnExportCertificate: Button
     private lateinit var btnInstallSystemCert: Button
+    private lateinit var btnResetHideBackground: Button
+    private lateinit var btnExportLogs: Button
+    private lateinit var btnExportRules: Button
+    private lateinit var btnJoinGroupSettings: Button
+    private lateinit var btnTrafficCardSettings: Button
+    private lateinit var btnCoexistSettings: Button
     private lateinit var btnModifyDeviceId: Button
     private lateinit var btnModifySerial: Button
     private lateinit var btnModifyMainboardId: Button
@@ -116,6 +117,10 @@ class SettingsActivity : BaseActivity() {
     private lateinit var textCustomBgPreview: TextView
     private lateinit var btnFloatingBall: Button
     private lateinit var btnRunningApps: Button
+    private lateinit var btnWeakNet: Button
+    private lateinit var textWeakNetDesc: TextView
+    private lateinit var btnCombo: Button
+    private lateinit var textComboDesc: TextView
 
     private val certificateExportPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
@@ -138,6 +143,13 @@ class SettingsActivity : BaseActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_settings)
 
+        val ivBg = findViewById<android.widget.ImageView>(R.id.ivBackground)
+        val bgPath = com.HanFeng.data.FeatureSettingsRepository.getCustomBackgroundPath(this)
+        if (!bgPath.isNullOrEmpty()) {
+            ivBg.applyCustomFileBackground(bgPath)
+        } else {
+            ivBg.applyCustomAssetBackground("custom/background")
+        }
         settingsRoot = findViewById(R.id.settingsRoot)
         switchHideBackground = findViewById(R.id.switchHideBackground)
         switchStealthMode = findViewById(R.id.switchStealthMode)
@@ -154,13 +166,9 @@ class SettingsActivity : BaseActivity() {
         textCustomTrackingHeadersPreview = findViewById(R.id.textCustomTrackingHeadersPreview)
         btnShizukuAdControl = findViewById(R.id.btnShizukuAdControl)
         btnAppFreeze = findViewById(R.id.btnAppFreeze)
-        btnGameAntiMark = findViewById(R.id.btnGameAntiMark)
-        btnCoexistSettings = findViewById(R.id.btnCoexistSettings)
-        btnTrafficCardSettings = findViewById(R.id.btnTrafficCardSettings)
-        btnJoinGroupSettings = findViewById(R.id.btnJoinGroupSettings)
-        btnResetHideBackground = findViewById(R.id.btnResetHideBackground)
-        btnExportLogs = findViewById(R.id.btnExportLogs)
-        btnExportRules = findViewById(R.id.btnExportRules)
+btnGameAntiMark = findViewById(R.id.btnGameAntiMark)
+        btnPerformanceTuner = findViewById(R.id.btnPerformanceTuner)
+        btnAppOpt = findViewById(R.id.btnAppOpt)
         btnRewardDeveloper = findViewById(R.id.btnRewardDeveloper)
         btnExportCertificate = findViewById(R.id.btnExportCertificate)
         btnInstallSystemCert = findViewById(R.id.btnInstallSystemCert)
@@ -180,7 +188,12 @@ class SettingsActivity : BaseActivity() {
         btnBackgroundRestrict = findViewById(R.id.btnBackgroundRestrict)
         btnRootScript = findViewById(R.id.btnRootScript)
         btnRootHide = findViewById(R.id.btnRootHide)
-        btnShizukuPermissionManage = findViewById(R.id.btnShizukuPermissionManage)
+        btnResetHideBackground = findViewById(R.id.btnResetHideBackground)
+        btnExportLogs = findViewById(R.id.btnExportLogs)
+        btnExportRules = findViewById(R.id.btnExportRules)
+        btnJoinGroupSettings = findViewById(R.id.btnJoinGroupSettings)
+        btnTrafficCardSettings = findViewById(R.id.btnTrafficCardSettings)
+        btnCoexistSettings = findViewById(R.id.btnCoexistSettings)
         cbAutoInstallSystemCert = findViewById(R.id.cbAutoInstallSystemCert)
 
         switchHotspotBlock = findViewById(R.id.switchHotspotBlock)
@@ -202,6 +215,10 @@ class SettingsActivity : BaseActivity() {
         textCustomBgPreview = findViewById(R.id.textCustomBgPreview)
         btnFloatingBall = findViewById(R.id.btnFloatingBall)
         btnRunningApps = findViewById(R.id.btnRunningApps)
+        btnWeakNet = findViewById(R.id.btnWeakNet)
+        textWeakNetDesc = findViewById(R.id.textWeakNetDesc)
+        btnCombo = findViewById(R.id.btnCombo)
+        textComboDesc = findViewById(R.id.textComboDesc)
 
         val initialTopPadding = settingsRoot.paddingTop
         val initialBottomPadding = settingsRoot.paddingBottom
@@ -253,6 +270,7 @@ class SettingsActivity : BaseActivity() {
         }
         switchAdFreeReward.setOnCheckedChangeListener { _, isChecked ->
             FeatureSettingsRepository.setAdFreeRewardEnabled(this, isChecked)
+            com.HanFeng.core.network.NetworkKernel.reloadIfRunning(this)
         }
 
         refreshCustomBackgroundPreview()
@@ -264,6 +282,13 @@ class SettingsActivity : BaseActivity() {
         }
         btnFloatingBall.setOnClickListener {
             startActivity(Intent(this, FloatingBallSettingsActivity::class.java))
+        }
+        btnWeakNet.setOnClickListener {
+            startActivity(Intent(this, WeakNetworkActivity::class.java))
+        }
+        btnCombo.setOnClickListener {
+            com.HanFeng.service.AutoComboController.applyState(this, true)
+            startActivity(Intent(this, com.HanFeng.ui.AutoComboActivity::class.java))
         }
 
         btnRunningApps.setOnClickListener {
@@ -277,9 +302,6 @@ class SettingsActivity : BaseActivity() {
             showCustomHeadersDialog()
         }
         refreshCustomTrackingPreviews()
-        btnShizukuPermissionManage.setOnClickListener {
-            startActivity(Intent(this, ShizukuPermissionManageActivity::class.java))
-        }
         btnShizukuAdControl.setOnClickListener {
             openShizukuAdControlCatalog()
         }
@@ -293,6 +315,18 @@ class SettingsActivity : BaseActivity() {
             launchActivitySafely(
                 GameAntiMarkActivity.createIntent(this),
                 failureMessage = "打开腾讯游戏防标记失败"
+            )
+        }
+        btnPerformanceTuner.setOnClickListener {
+            launchActivitySafely(
+                PerformanceTunerActivity.createIntent(this),
+                failureMessage = "打开性能调优失败"
+            )
+        }
+        btnAppOpt.setOnClickListener {
+            launchActivitySafely(
+                Intent(this, ThreadOptimizationActivity::class.java),
+                failureMessage = "打开线程优化失败"
             )
         }
 
@@ -453,6 +487,28 @@ btnRootHide.setOnClickListener {
         syncAdFreeRewardSwitch()
         refreshCustomBackgroundPreview()
         refreshNotificationAccessHintAsync()
+syncWeakNetDesc()
+        syncComboDesc()
+    }
+
+    private fun syncWeakNetDesc() {
+        val enabled = com.HanFeng.data.WeakNetworkController.isEnabled(this)
+        val target = FeatureSettingsRepository.getWeakNetTargetPackage(this)
+        textWeakNetDesc.text = when {
+            !enabled -> "未开启"
+            target.isNullOrBlank() -> "已开启 · 全局"
+            else -> "已开启 · 指定 App"
+        }
+    }
+
+    private fun syncComboDesc() {
+        val enabled = com.HanFeng.data.AutoComboRepository.isEnabled(this)
+        val script = com.HanFeng.data.AutoComboRepository.getCurrentScript(this)
+        textComboDesc.text = when {
+            !enabled -> "未开启"
+            script != null -> "已开启 · ${script.name}"
+            else -> "已开启 · 无脚本"
+        }
     }
 
     override fun onDestroy() {
@@ -1560,8 +1616,31 @@ btnRootHide.setOnClickListener {
             setPadding(0, 0, 0, 8.dp)
             maxLines = 8
         }
-        val etInput = EditText(this).apply {
+        val tvLabel1 = TextView(this).apply {
+            text = "IMEI1 (卡槽1)"
+            setTextColor(getColor(com.HanFeng.R.color.hf_text_primary))
+            textSize = 14f
+            setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+            setPadding(0, 8.dp, 0, 4.dp)
+        }
+        val etInput1 = EditText(this).apply {
             hint = "15 位数字 (末位 Luhn 校验)"
+            setSingleLine(true)
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setTextColor(getColor(com.HanFeng.R.color.hf_text_primary))
+            setHintTextColor(getColor(com.HanFeng.R.color.hf_text_secondary))
+            setBackgroundResource(com.HanFeng.R.drawable.bg_panel)
+            setPadding(12.dp, 12.dp, 12.dp, 12.dp)
+        }
+        val tvLabel2 = TextView(this).apply {
+            text = "IMEI2 (卡槽2, 可选)"
+            setTextColor(getColor(com.HanFeng.R.color.hf_text_primary))
+            textSize = 14f
+            setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+            setPadding(0, 8.dp, 0, 4.dp)
+        }
+        val etInput2 = EditText(this).apply {
+            hint = "15 位数字, 留空则不修改 IMEI2"
             setSingleLine(true)
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
             setTextColor(getColor(com.HanFeng.R.color.hf_text_primary))
@@ -1584,7 +1663,7 @@ btnRootHide.setOnClickListener {
             setPadding(0, 8.dp, 0, 0)
         }
         val btnRandom = Button(this).apply {
-            text = "随机"
+            text = "随机填充"
             textSize = 13f
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 4.dp }
         }
@@ -1596,28 +1675,35 @@ btnRootHide.setOnClickListener {
         btnRow.addView(btnRandom)
         btnRow.addView(btnRestore)
         container.addView(tvCurrent)
-        container.addView(etInput)
+        container.addView(tvLabel1)
+        container.addView(etInput1)
+        container.addView(tvLabel2)
+        container.addView(etInput2)
         container.addView(tvHint)
         container.addView(btnRow)
 
         val dialog = StableDialog.builder(this)
-            .setTitle("修改 IMEI")
+            .setTitle("修改 IMEI (双卡槽)")
             .setView(container)
             .setPositiveButton("确认修改") { _, _ ->
-                val newImei = etInput.text.toString().trim()
-                if (newImei.isBlank()) {
-                    showShortToast("请输入 IMEI")
+                val imei1 = etInput1.text.toString().trim()
+                val imei2 = etInput2.text.toString().trim()
+                if (imei1.isBlank() && imei2.isBlank()) {
+                    showShortToast("请至少输入一个 IMEI")
                     return@setPositiveButton
                 }
-                executeImeiChange(newImei)
+                executeImeiChange(imei1, imei2)
             }
             .setNegativeButton("取消", null)
             .create()
 
         dialog.show()
         btnRandom.setOnClickListener {
-            etInput.setText(com.HanFeng.adblocker.shizuku.DeviceIdModifier.generateRandomImei())
-            etInput.setSelection(etInput.text.length)
+            val rand1 = com.HanFeng.adblocker.shizuku.DeviceIdModifier.generateRandomImei()
+            val rand2 = com.HanFeng.adblocker.shizuku.DeviceIdModifier.generateRandomImei()
+            etInput1.setText(rand1)
+            etInput1.setSelection(etInput1.text.length)
+            etInput2.setText(rand2)
         }
         btnRestore.setOnClickListener {
             lifecycleScope.launch {
@@ -1637,49 +1723,69 @@ btnRootHide.setOnClickListener {
             if (isFinishing || isDestroyed) return@launch
             if (!dialog.isShowing) return@launch
             val lines = result.output.trim().lines()
-            // 优先 RIL 真值 (slot0)
-            val rilVal = lines.firstOrNull { it.startsWith("RIL(slot0)=") }
+            val rilVal = lines.firstOrNull { l -> l.startsWith("RIL(slot0)=") }
                 ?.substringAfter('=')?.trim()
-                ?.takeIf { it.isNotBlank() && it != "(空)" }
-            val propVal = lines.firstOrNull { it.startsWith("gsm.imei=") }
+                ?.takeIf { v -> v.isNotBlank() && v != "(空)" }
+            val propVal = lines.firstOrNull { l -> l.startsWith("gsm.imei=") }
                 ?.substringAfter('=')?.trim()
-                ?.takeIf { it.isNotBlank() && it != "(空)" }
-                ?: lines.firstOrNull { it.startsWith("persist.sys.imei=") }
+                ?.takeIf { v -> v.isNotBlank() && v != "(空)" }
+                ?: lines.firstOrNull { l -> l.startsWith("persist.sys.imei=") }
                     ?.substringAfter('=')?.trim()
-                    ?.takeIf { it.isNotBlank() && it != "(空)" }
-                ?: lines.firstOrNull { it.startsWith("ril.imei=") }
+                    ?.takeIf { v -> v.isNotBlank() && v != "(空)" }
+                ?: lines.firstOrNull { l -> l.startsWith("ril.imei=") }
                     ?.substringAfter('=')?.trim()
-                    ?.takeIf { it.isNotBlank() && it != "(空)" }
+                    ?.takeIf { v -> v.isNotBlank() && v != "(空)" }
+            val imei2Val = lines.firstOrNull { l -> l.startsWith("gsm.imei2=") }
+                ?.substringAfter('=')?.trim()
+                ?.takeIf { v -> v.isNotBlank() && v != "(空)" }
+                ?: lines.firstOrNull { l -> l.startsWith("persist.sys.imei2=") }
+                    ?.substringAfter('=')?.trim()
+                    ?.takeIf { v -> v.isNotBlank() && v != "(空)" }
             val displayVal = rilVal ?: propVal
-            tvCurrent.text = "当前 IMEI：\n${displayVal ?: "(无法读取)"}"
+            val readFailedNote = when {
+                !displayVal.isNullOrBlank() -> ""
+                result.output.isBlank() -> "\n(Root 会话无输出, 请确认已授权 Root)"
+                result.output.contains("su_permission_denied") -> "\n(Root 授权被拒绝)"
+                result.output.contains("tmpfs") || result.output.contains("unknown") -> "\n(RIL 接口无响应, 多为系统限制)"
+                else -> ""
+            }
+            val diagSection = if (displayVal.isNullOrBlank()) {
+                val diagLines = lines.filter { line ->
+                    line.startsWith("#") || (
+                        line.contains('=') && !line.startsWith("RIL") && !line.startsWith("DUMPSYS") &&
+                            line.trim().isNotEmpty() && line.length <= 80
+                        )
+                }.take(8)
+                if (diagLines.isNotEmpty()) "\n--- 读取诊断 ---\n" + diagLines.joinToString("\n") else ""
+            } else ""
+            tvCurrent.text = "当前 IMEI1：${displayVal ?: "(无法读取)"}$readFailedNote$diagSection\n" +
+                "当前 IMEI2：${imei2Val ?: "(无)"}"
             if (!propVal.isNullOrBlank()) {
-                etInput.setText(propVal)
-                etInput.setSelection(etInput.text.length)
+                etInput1.setText(propVal as CharSequence)
+                etInput1.setSelection(etInput1.text.length)
             } else if (!rilVal.isNullOrBlank()) {
-                etInput.setText(rilVal)
-                etInput.setSelection(etInput.text.length)
+                etInput1.setText(rilVal as CharSequence)
+                etInput1.setSelection(etInput1.text.length)
+            }
+            if (!imei2Val.isNullOrBlank()) {
+                etInput2.setText(imei2Val as CharSequence)
             }
         }
     }
 
-    private fun executeImeiChange(newImei: String) {
+    private fun executeImeiChange(imei1: String, imei2: String) {
         lifecycleScope.launch {
             val modifier = com.HanFeng.adblocker.shizuku.DeviceIdModifier()
-            val result = withContext(Dispatchers.Default) { modifier.writeImei(newImei) }
+            val result = withContext(Dispatchers.Default) {
+                if (imei2.isBlank()) modifier.writeImei(imei1)
+                else modifier.writeImeiDual(imei1, imei2)
+            }
             withContext(Dispatchers.Main) {
-                if (result.exitCode == 0) {
-                    StableDialog.builder(this@SettingsActivity)
-                        .setTitle("修改结果")
-                        .setMessage("已尝试修改 IMEI。\n\n${result.output}")
-                        .setPositiveButton("确定", null)
-                        .showSafely(this@SettingsActivity, "imei-changed")
-                } else {
-                    StableDialog.builder(this@SettingsActivity)
-                        .setTitle("修改提示")
-                        .setMessage(result.output.ifBlank { "修改失败 (exit=${result.exitCode})" })
-                        .setPositiveButton("确定", null)
-                        .showSafely(this@SettingsActivity, "imei-change-failed")
-                }
+                StableDialog.builder(this@SettingsActivity)
+                    .setTitle("修改结果")
+                    .setMessage(result.output.ifBlank { "exit=${result.exitCode}" })
+                    .setPositiveButton("确定", null)
+                    .showSafely(this@SettingsActivity, "imei-changed")
             }
         }
     }
@@ -1774,25 +1880,41 @@ btnRootHide.setOnClickListener {
             if (isFinishing || isDestroyed) return@launch
             if (!dialog.isShowing) return@launch
             val lines = result.output.trim().lines()
-            val rilVal = lines.firstOrNull { it.startsWith("RIL(slot0)=") }
+            val rilVal = lines.firstOrNull { l -> l.startsWith("RIL(slot0)=") }
                 ?.substringAfter('=')?.trim()
-                ?.takeIf { it.isNotBlank() && it != "(空)" }
-            val propVal = lines.firstOrNull { it.startsWith("gsm.meid=") }
+                ?.takeIf { v -> v.isNotBlank() && v != "(空)" }
+            val propVal = lines.firstOrNull { l -> l.startsWith("gsm.meid=") }
                 ?.substringAfter('=')?.trim()
-                ?.takeIf { it.isNotBlank() && it != "(空)" }
-                ?: lines.firstOrNull { it.startsWith("persist.sys.meid=") }
+                ?.takeIf { v -> v.isNotBlank() && v != "(空)" }
+                ?: lines.firstOrNull { l -> l.startsWith("persist.sys.meid=") }
                     ?.substringAfter('=')?.trim()
-                    ?.takeIf { it.isNotBlank() && it != "(空)" }
-                ?: lines.firstOrNull { it.startsWith("ril.meid=") }
+                    ?.takeIf { v -> v.isNotBlank() && v != "(空)" }
+                ?: lines.firstOrNull { l -> l.startsWith("ril.meid=") }
                     ?.substringAfter('=')?.trim()
-                    ?.takeIf { it.isNotBlank() && it != "(空)" }
+                    ?.takeIf { v -> v.isNotBlank() && v != "(空)" }
             val displayVal = rilVal ?: propVal
-            tvCurrent.text = "当前 MEID：\n${displayVal ?: "(无法读取)"}"
+            val readFailedNote = when {
+                !displayVal.isNullOrBlank() -> ""
+                result.output.isBlank() -> "\n(Root 会话无输出, 请确认已授权 Root)"
+                result.output.contains("su_permission_denied") -> "\n(Root 授权被拒绝)"
+                result.output.contains("tmpfs") || result.output.contains("unknown") -> "\n(RIL 接口无响应, 多为系统限制)"
+                else -> ""
+            }
+            val diagSection = if (displayVal.isNullOrBlank()) {
+                val diagLines = lines.filter { line ->
+                    line.startsWith("#") || (
+                        line.contains('=') && !line.startsWith("RIL") && !line.startsWith("DUMPSYS") &&
+                            line.trim().isNotEmpty() && line.length <= 80
+                        )
+                }.take(8)
+                if (diagLines.isNotEmpty()) "\n--- 读取诊断 ---\n" + diagLines.joinToString("\n") else ""
+            } else ""
+            tvCurrent.text = "当前 MEID：\n${displayVal ?: "(无法读取)"}$readFailedNote$diagSection"
             if (!propVal.isNullOrBlank()) {
-                etInput.setText(propVal)
+                etInput.setText(propVal as CharSequence)
                 etInput.setSelection(etInput.text.length)
             } else if (!rilVal.isNullOrBlank()) {
-                etInput.setText(rilVal)
+                etInput.setText(rilVal as CharSequence)
                 etInput.setSelection(etInput.text.length)
             }
         }
@@ -1801,7 +1923,8 @@ btnRootHide.setOnClickListener {
     private fun executeMeidChange(newMeid: String) {
         lifecycleScope.launch {
             val modifier = com.HanFeng.adblocker.shizuku.DeviceIdModifier()
-            val result = withContext(Dispatchers.Default) { modifier.writeMeid(newMeid) }
+            val result: com.HanFeng.adblocker.shizuku.DeviceIdModifier.ShellResult =
+                withContext(Dispatchers.Default) { modifier.writeMeid(newMeid) }
             withContext(Dispatchers.Main) {
                 if (result.exitCode == 0) {
                     StableDialog.builder(this@SettingsActivity)
@@ -2079,25 +2202,28 @@ btnRootHide.setOnClickListener {
         onResult: (granted: Boolean) -> Unit
     ) {
         lifecycleScope.launch {
-            // 已授权直接走
-            if (com.HanFeng.adblocker.shizuku.DeviceIdModifier.isRootAvailable()) {
+            // 已授权快速通过，避免打扰（IO 线程执行，不阻塞主线程）
+            if (withContext(Dispatchers.IO) { com.HanFeng.adblocker.shizuku.DeviceIdModifier.isRootAvailable() }) {
                 onResult(true)
                 return@launch
             }
-            // 否则给出 loading 提示，异步等待 root 授权
+            // 未授权：给 loading 提示后异步等待 root 授权（绝不在主线程同步等待 su，
+            // 否则首次授权会 ANR 且 Magisk 弹窗无法交互，表现为"功能点了没反应"）
             val toastJob = lifecycleScope.launch(Dispatchers.Main) {
                 kotlinx.coroutines.delay(250)
                 if (lifecycleScope.isActive) showShortToast("请允许 Root 授权以使用 $featureName")
             }
-            val granted = withContext(Dispatchers.Default) {
+            val granted = withContext(Dispatchers.IO) {
                 com.HanFeng.adblocker.shizuku.DeviceIdModifier.isRootAvailable()
             }
             toastJob.cancel()
             if (isFinishing || isDestroyed) return@launch
             if (!granted) {
+                val diag = com.HanFeng.adblocker.shizuku.SuSession.getInstance()
+                    .getLastOpenDiagnostic()
                 StableDialog.builder(this@SettingsActivity)
                     .setTitle("需要 Root 权限")
-                    .setMessage("$featureName 需要 Root 权限，请在 Root 授权框同意授权后再试。")
+                    .setMessage("$featureName 需要 Root 权限，请在 Root 授权框同意授权后再试。\n\n诊断：$diag")
                     .setPositiveButton("确定", null)
                     .showSafely(this@SettingsActivity, tag)
             }
@@ -3193,6 +3319,8 @@ btnRootHide.setOnClickListener {
             withContext(Dispatchers.IO) {
                 val paths = FeatureSettingsRepository.getCustomBackgroundPaths(appContext)
                 paths.forEach { runCatching { java.io.File(it).delete() } }
+                // 清空内存缓存中的旧背景条目，避免 SP 已清但界面仍命中旧图/旧 Bitmap
+                paths.forEach { com.HanFeng.ui.clearCustomFileBackgroundCache(it) }
                 // 清空 SP 中的列表
                 FeatureSettingsRepository.setCustomBackgroundPath(appContext, null)
             }
@@ -3246,8 +3374,10 @@ btnRootHide.setOnClickListener {
                 val appCtx = appContext
                 lifecycleScope.launch {
                     withContext(Dispatchers.IO) {
-                        runCatching { java.io.File(path).delete() }
+                        // 先更新 SP 与内存缓存，再删文件，保证中间态一致且不抛异常
+                        com.HanFeng.ui.clearCustomFileBackgroundCache(path)
                         FeatureSettingsRepository.removeCustomBackgroundPath(appCtx, path)
+                        runCatching { java.io.File(path).delete() }
                     }
                     runOnUiThread {
                         refreshCustomBackgroundPreview()

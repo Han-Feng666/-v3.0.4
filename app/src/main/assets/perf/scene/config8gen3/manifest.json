@@ -1,0 +1,12 @@
+{
+  "version": "𝐒𝐂𝐄𝐍𝐄-🐟-𝐇𝐏-𝐑𝟒修复终版⚡",
+  "author": "SCENE9",
+  "projectUrl": "http://vtools.omarea.com/",
+  "features": {
+    "strict": true,
+    "pedestal": false,
+    "reboot": false,
+    "fas": false,
+    "limiter": true
+  }
+}

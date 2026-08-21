@@ -16,6 +16,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import com.HanFeng.data.FeatureSettingsRepository
 import com.HanFeng.data.LogRepository
 import com.HanFeng.databinding.ActivityDecisionDomainsBinding
 import com.HanFeng.databinding.ItemDecisionDomainBinding
@@ -43,6 +44,12 @@ class DecisionDomainsActivity : BaseActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         binding = ActivityDecisionDomainsBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        val bgPath = com.HanFeng.data.FeatureSettingsRepository.getCustomBackgroundPath(this)
+        if (!bgPath.isNullOrEmpty()) {
+            binding.ivBackground.applyCustomFileBackground(bgPath)
+        } else {
+            binding.ivBackground.applyCustomAssetBackground("custom/background")
+        }
         ViewCompat.setOnApplyWindowInsetsListener(binding.rootLayout) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             view.setPadding(view.paddingLeft, bars.top + 8.dp, view.paddingRight, bars.bottom + 16.dp)
@@ -96,14 +103,12 @@ class DecisionDomainsActivity : BaseActivity() {
         }
         val appContext = applicationContext
         val newAction = if (entry.type == LogRepository.DomainDecisionType.BLOCKED) "放行" else "拦截"
-        // 切换决策涉及 RuleRepository SP/文件读+写 (可能数 MB 同步 IO)，必须放后台
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
                 LogRepository.toggleDomainDecision(appContext, entry.domain, entry.type)
             }
-            NetworkKernel.reloadIfRunning(appContext)
-            android.widget.Toast.makeText(appContext, "已将该域名切换为 $newAction", android.widget.Toast.LENGTH_SHORT).show()
             loadEntries()
+            android.widget.Toast.makeText(appContext, "已将该域名切换为 $newAction，已实时生效", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -208,7 +213,7 @@ class DecisionDomainsActivity : BaseActivity() {
                     LogRepository.DecisionScope.LEARNING_FEEDBACK -> "学习IP"
                 }
                 val blocked = item.type == LogRepository.DomainDecisionType.BLOCKED
-                binding.textType.text = "${if (blocked) "拦截" else "放行"} · $scopeText"
+                binding.textType.text = if (blocked) "拦截" else "放行"
                 binding.textType.setBackgroundResource(
                     if (blocked) com.HanFeng.R.drawable.bg_decision_blocked else com.HanFeng.R.drawable.bg_decision_allowed
                 )

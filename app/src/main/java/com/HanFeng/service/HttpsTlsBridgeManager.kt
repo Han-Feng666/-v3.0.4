@@ -26,15 +26,15 @@ import com.HanFeng.service.HpackDecoder.HeaderField
 
 object HttpsTlsBridgeManager {
     private const val ACCEPT_TIMEOUT_MILLIS = 1_000
-    private const val CONNECT_TIMEOUT_MILLIS = 4_000
+    private const val CONNECT_TIMEOUT_MILLIS = 2_000
     private const val HTTP2_VERBOSE_FRAME_LIMIT = 4
     private const val HTTP2_SUMMARY_FRAME_INTERVAL = 100
     private const val HTTP2_HEADER_BLOCK_LARGE_THRESHOLD = 16 * 1024
     private const val HTTP2_DATA_DEEP_INSPECTION_SCORE_THRESHOLD = 2
     private const val HTTP2_DATA_BODY_LIMIT_BYTES = 64 * 1024
-    private const val BRIDGE_EXECUTOR_CORE_THREADS = 2
-    private const val BRIDGE_EXECUTOR_MAX_THREADS = 8
-    private const val BRIDGE_EXECUTOR_QUEUE_CAPACITY = 64
+    private const val BRIDGE_EXECUTOR_CORE_THREADS = 4
+    private const val BRIDGE_EXECUTOR_MAX_THREADS = 16
+    private const val BRIDGE_EXECUTOR_QUEUE_CAPACITY = 128
     private val bridges = ConcurrentHashMap<String, RunningBridge>()
     private val http2LogStates = ConcurrentHashMap<String, Http2LogState>()
     private val http2FlowControls = ConcurrentHashMap<String, Http2FlowControl>()
@@ -163,10 +163,10 @@ object HttpsTlsBridgeManager {
             TlsMitmSessionManager.markMitmBypass(context, session.flowKey, "bridge-executor-saturated:$stage")
             LogRepository.append(
                 context,
-                "HTTPS TLS bridge overloaded stage=$stage host=${session.host} flow=${session.flowKey} active=${executor.activeCount} queue=${executor.queue.size}"
+                "HTTPS TLS bridge overloaded stage=$stage host=${session.host} flow=${session.flowKey} active=${executor.activeCount} queue=${executor.queue.size} - fallback to sync"
             )
-            closeOnReject.close()
-            false
+            task()
+            true
         }
     }
 
@@ -214,6 +214,7 @@ object HttpsTlsBridgeManager {
             LogRepository.append(context, "Protect upstream socket failed for HTTPS bridge host=${session.host}")
         }
         rawUpstreamSocket.connect(InetSocketAddress(session.targetIp, session.targetPort), CONNECT_TIMEOUT_MILLIS)
+        rawUpstreamSocket.soTimeout = CONNECT_TIMEOUT_MILLIS
         val upstreamFactory = javax.net.ssl.SSLSocketFactory.getDefault() as? javax.net.ssl.SSLSocketFactory
             ?: throw IOException("Upstream TLS socket factory unavailable")
         return upstreamFactory

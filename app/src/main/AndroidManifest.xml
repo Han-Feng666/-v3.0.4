@@ -98,6 +98,18 @@
             android:exported="false" />
 
         <activity
+            android:name="com.HanFeng.ui.PerformanceTunerActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.SceneParamsEditorActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.AppOptRulesEditorActivity"
+            android:exported="false" />
+
+        <activity
             android:name="com.HanFeng.ui.GamePackageListActivity"
             android:exported="false" />
 
@@ -118,8 +130,48 @@
             android:exported="false" />
 
         <activity
+            android:name="com.HanFeng.ui.AppOptAppsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.ThreadOptimizationActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:exported="false"
+            android:theme="@style/Theme.HanFengAdBlock" />
+
+        <activity
             android:name="com.HanFeng.ui.FloatingBallSettingsActivity"
             android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.WeakNetworkActivity"
+            android:exported="false" />
+
+        <service
+            android:name="com.HanFeng.service.AutoComboAccessibilityService"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/auto_combo_accessibility" />
+        </service>
+
+        <activity
+            android:name="com.HanFeng.ui.AutoComboActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.AutoComboEditorActivity"
+            android:exported="false" />
+
+        <service
+            android:name="com.HanFeng.service.AutoComboFloatingService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse" />
 
         <activity
             android:name="com.HanFeng.ui.RankingDetailActivity"
@@ -135,7 +187,8 @@
 
         <activity
             android:name="com.HanFeng.ui.MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:theme="@style/Theme.HanFengAdBlock.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

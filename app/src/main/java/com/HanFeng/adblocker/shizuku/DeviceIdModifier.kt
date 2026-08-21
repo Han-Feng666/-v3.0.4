@@ -172,6 +172,79 @@ class DeviceIdModifier {
             if (session.isSessionOpen()) return true
             return session.open(timeoutSeconds = 60)
         }
+
+        /** 检测 resetprop 是否可用 (Magisk/KSU 有, 纯 root shell 无) */
+        fun hasResetprop(): Boolean {
+            val r = SuSession.getInstance().execute("command -v resetprop 2>/dev/null && echo FOUND || echo NOT_FOUND", 5)
+            return r.output.contains("FOUND")
+        }
+
+        /**
+         * 全面诊断 Root 环境，返回可读的诊断报告。
+         * 用于在修改失败时帮助用户定位问题：未授权、缺少 resetprop/sqlite3、module 未安装等。
+         */
+        fun diagnoseRootEnvironment(): String {
+            val session = SuSession.getInstance()
+            val isRoot = session.isSessionOpen() || session.open(15)
+            return buildString {
+                appendLine("=== Root 环境诊断 ===")
+                appendLine("Root 已授权: $isRoot")
+                if (!isRoot) {
+                    appendLine("诊断: ${session.getLastOpenDiagnostic()}")
+                    return@buildString
+                }
+                appendLine("Root 方案: ${session.rootSolution}")
+                if (session.rootVersion.isNotBlank()) appendLine("版本: ${session.rootVersion}")
+                appendLine("resetprop 可用: ${hasResetprop()}")
+
+                val hasSqlite3 = session.execute("command -v sqlite3 2>/dev/null && echo FOUND || echo NOT_FOUND", 5)
+                    .output.contains("FOUND")
+                appendLine("sqlite3 可用: $hasSqlite3")
+
+                val hasSettings = session.execute("command -v settings 2>/dev/null && echo FOUND || echo NOT_FOUND", 5)
+                    .output.contains("FOUND")
+                appendLine("settings 命令可用: $hasSettings")
+
+                val ssaidExists = session.fileExists("/data/system/users/0/settings_ssaid.xml")
+                appendLine("SSAID 文件存在: $ssaidExists")
+
+                val moduleInstalled = session.fileExists("/data/adb/modules/hf_device_props/module.prop")
+                appendLine("hf_device_props 模块已安装: $moduleInstalled")
+                if (moduleInstalled) {
+                    val moduleEnabled = !session.fileExists("/data/adb/modules/hf_device_props/disable")
+                    appendLine("模块已启用: $moduleEnabled")
+                    val serviceExists = session.fileExists("/data/adb/modules/hf_device_props/service.sh")
+                    appendLine("service.sh 存在: $serviceExists")
+                    val propsExists = session.fileExists("/data/adb/modules/hf_device_props/props.list")
+                    appendLine("props.list 存在: $propsExists")
+                }
+            }.trimEnd()
+        }
+
+        /** 验证写入: 读回当前值, 若与期望不符返 ShellResult(-1, 详细诊断) */
+        fun verifyWrite(
+            label: String,
+            expected: String,
+            readCmd: String,
+            timeout: Long = 5
+        ): ShellResult {
+            val r = SuSession.getInstance().execute(readCmd, timeout)
+            val actual = r.output.trim()
+            if (actual == expected || actual.contains(expected)) {
+                return ShellResult(0, "验证通过")
+            }
+            val diag = buildString {
+                appendLine("$label 写入后验证失败")
+                appendLine("期望值: $expected")
+                appendLine("实际值: $actual")
+                appendLine("root 会话: ${if (SuSession.getInstance().isSessionOpen()) "已授权" else "未授权"}")
+                appendLine("resetprop 可用: ${if (hasResetprop()) "是" else "否 (KernelSU 或原始 su, ro.* 无法通过 setprop 修改)"}")
+                appendLine("提示: 若设备使用 KernelSU, ro.* 类属性只能通过 KSU WebUI 或模块覆盖; 非 ro.* 属性可通过 setprop 修改")
+                appendLine("")
+                appendLine(diagnoseRootEnvironment())
+            }
+            return ShellResult(-1, diag.toString())
+        }
     }
 
     data class ShellResult(val exitCode: Int, val output: String)
@@ -480,8 +553,15 @@ class DeviceIdModifier {
 
         val verify = readAndroidId()
         if (verify.output != newId) {
-            Log.w(TAG, "写入验证失败: 期望=$newId, 实际=${verify.output}")
-            return ShellResult(0, "写入完成但验证不匹配。期望=$newId 实际=${verify.output}")
+            val diag = buildString {
+                appendLine("Android ID 写入后验证失败")
+                appendLine("期望: $newId")
+                appendLine("实际: ${verify.output}")
+                appendLine("root 会话: ${if (SuSession.getInstance().isSessionOpen()) "已授权" else "未授权"}")
+                appendLine("")
+                appendLine(DeviceIdModifier.diagnoseRootEnvironment())
+            }
+            return ShellResult(-1, diag.toString().trim())
         }
 
         return result
@@ -491,7 +571,7 @@ class DeviceIdModifier {
         return runRootShell("getprop ro.serialno 2>/dev/null || getprop ro.boot.serialno 2>/dev/null || echo 'none'")
     }
 
-    fun writeSerialNo(newSerial: String): ShellResult {
+fun writeSerialNo(newSerial: String): ShellResult {
         if (newSerial.isBlank()) return ShellResult(-1, "序列号不能为空")
         if (newSerial.length < 4) return ShellResult(-1, "序列号长度至少 4 位")
         if (!newSerial.matches(Regex("[a-zA-Z0-9]+"))) return ShellResult(-1, "序列号只能包含字母和数字")
@@ -531,11 +611,35 @@ class DeviceIdModifier {
 
         val result = runRootShell(cmds.joinToString("\n"))
 
-        val verify = readSerialNo()
-        if (verify.output.trim() != newSerial) {
-            Log.w(TAG, "序列号写入后验证不一致: 期望=$newSerial, 实际=${verify.output}（重启后由 hf_device_props module service.sh 自动覆盖生效）")
-        }
+        // 验证写入：读 ro.serialno 和 persist.sys.serialno 两个维度
+        val verifyRo = runRootShell("getprop ro.serialno 2>/dev/null || echo 'none'")
+        val verifyPersist = runRootShell("getprop persist.sys.serialno 2>/dev/null || echo 'none'")
+        val roOk = verifyRo.output.trim() == newSerial
+        val persistOk = verifyPersist.output.trim() == newSerial
+        val hasRp = hasResetprop()
 
+        if (!roOk && !persistOk) {
+            val diag = buildString {
+                appendLine("写入后验证失败")
+                appendLine("ro.serialno=${verifyRo.output.trim()}")
+                appendLine("persist.sys.serialno=${verifyPersist.output.trim()}")
+                appendLine("期望值: $newSerial")
+                if (!hasRp) {
+                    appendLine("原因: 当前设备无 resetprop(KernelSU/原始su), ro.* 属性无法被 setprop 修改。")
+                    appendLine("修复: 已写入 Magisk 模块持久化，重启后 hf_device_props 的 service.sh 会通过 resetprop 覆盖 ro.* 值。")
+                    appendLine("如仍不生效，请确认 Magisk 模块 /data/adb/modules/hf_device_props/ 已启用且 service.sh 可执行。")
+                } else {
+                    appendLine("原因: 未知(resetprop 存在但未生效), 重启后由 hf_device_props 模块覆盖")
+                }
+                appendLine("")
+                appendLine(DeviceIdModifier.diagnoseRootEnvironment())
+            }
+            return ShellResult(-1, diag.toString().trim())
+        }
+        if (!roOk && hasRp) {
+            // ro.serialno 没改但 persist.sys.serialno 改了 — 部分写入成功
+            return ShellResult(0, "ro.serialno 运行时未生效(重启后由模块覆盖), persist.sys.serialno 已修改成功")
+        }
         return result
     }
 
@@ -699,7 +803,14 @@ class DeviceIdModifier {
         "ro.boot.imei1",
         "ro.boot.imei2",
         "ro.boot.miui.imei1",
-        "ro.boot.miui.imei2"
+        "ro.boot.miui.imei2",
+        "ro.boot.imei0",
+        "vendor.ril.imei1",
+        "vendor.ril.imei2",
+        "persist.radio.imei",
+        "persist.radio.imei1",
+        "ro.ril.oem.imei1",
+        "ro.ril.oem.imei2"
     )
 
     /** MEID prop 同源集 (CDMA 机型使用, 与 GSM IMEI 互斥) */
@@ -713,7 +824,10 @@ class DeviceIdModifier {
 
     private val MEID_READ_PROPS = MEID_WRITE_PROPS + listOf(
         "ro.boot.miui.meid",
-        "persist.sys.meid2"
+        "persist.sys.meid2",
+        "ro.cdma.meid",
+        "persist.radio.meid",
+        "ro.ril.oem.meid"
     )
 
     /** EFS / QCN 关键备份路径(用于 NV 写入前手动备份) */
@@ -730,27 +844,61 @@ class DeviceIdModifier {
 
     /**
      * 读取当前 IMEI (多源 fallback)
-     *   1) service call iphonesubinfo 1 (slot 0) → 实际 RIL 真值
-     *   2) 失败则逐条读 IMEI_READ_PROPS  (prop 视图, 可能是被 resetprop 改过的)
+     *   1) service call iphonesubinfo 1 (slot 0) → 实际 RIL 真值 (Android 10+ 被 permission 拦截)
+     *   2) dumpsys telephony.registry → 通过 root 直接读 TelephonyRegistry 状态
+     *   3) dumpsys iphonesubinfo → 部分系统可用
+     *   4) sqlite3 读 telephony.db → 部分系统存有 IMEI
+     *   5) 逐条读 IMEI_READ_PROPS (prop 视图, 可能已是被 resetprop 改过的值)
      */
     fun readImei(): ShellResult {
-        val debugSb = StringBuilder()   // 所有解析过程信息 → 给 result.output, UI 若要展示诊断可看
-        // 优先 RIL 真值 (多种 service call 号 + dumpsys)
+        val debugSb = StringBuilder()
+        // 1) RIL 真值 (多种 service call 号)
         for (svcId in listOf(1, 4, 11)) {
             val txt = runRootShell("service call iphonesubinfo $svcId 2>/dev/null").output.trim()
             if (txt.isBlank() || txt.contains("Exception") || txt.contains("Unknown")) continue
             val parsed = extractImeiFromParcel(txt)
             debugSb.append("iphonesubinfo.$svcId=${parsed ?: "(解析失败, raw=${txt.take(80)})"}\n")
         }
+        // 2) dumpsys telephony.registry (Android 10+ 上比 service call 更可靠)
+        val teleReg = runRootShell("dumpsys telephony.registry 2>/dev/null").output.trim()
+        if (teleReg.isNotBlank()) {
+            val m = Regex("(?i)(imei|mImei)[\\s:=]+([0-9]{14,15})").find(teleReg)
+            if (m != null) {
+                debugSb.append("telephony.registry=${m.groupValues[2]}\n")
+            } else {
+                val m2 = Regex("\\b(\\d{15})\\b").find(teleReg)
+                if (m2 != null) debugSb.append("telephony.registry.raw=${m2.value}\n")
+                else debugSb.append("telephony.registry=(无IMEI匹配)\n")
+            }
+        }
+        // 3) dumpsys iphonesubinfo
         val dumpOut = runRootShell("dumpsys iphonesubinfo 2>/dev/null").output.trim()
         if (dumpOut.isNotBlank()) {
             val m = Regex("(?i)imei[\\s:=]+([0-9]{14,15})").find(dumpOut)
             debugSb.append("dumpsys.imei=${m?.groupValues?.get(1) ?: "(无匹配)"}\n")
         }
+        // 4) 从 telephony.db 读 (部分系统 /data/user_de 路径, root 直接读)
+        for (dbPath in listOf(
+            "/data/user_de/0/com.android.phone/databases/telephony.db",
+            "/data/data/com.android.phone/databases/telephony.db"
+        )) {
+            val dbImei = runRootShell(
+                "test -r '$dbPath' && " +
+                "for s in /system/bin/sqlite3 /system/xbin/sqlite3 sqlite3; do " +
+                "if command -v \"\${s}\" >/dev/null 2>&1; then " +
+                "\"\${s}\" '$dbPath' \"SELECT value FROM properties WHERE name LIKE '%imei%' LIMIT 5;\" 2>/dev/null; " +
+                "break; fi; done 2>/dev/null || echo ''"
+            ).output.trim()
+            if (dbImei.isNotBlank() && dbImei != "(空)" && !dbImei.contains("not found")) {
+                val m = Regex("\\b(\\d{15})\\b").find(dbImei)
+                if (m != null) {
+                    debugSb.append("telephony.db.imei=${m.value}\n")
+                    break
+                }
+            }
+        }
         // 选取第一段成功解析出的纯 IMEI 15 位数字作为最终 RIL(slot0) 真值
         val rilImei = Regex("\\b\\d{15}\\b").find(debugSb.toString())?.value
-        // 用户拿到 result.output 时, 关键关心的就是 RIL(slot0) 行后面是不是纯 IMEI 15 位
-        // 改为: 第一行直接给最强 RIL 真值, 后续 debug 信息附带展示方便诊断
         val sb = StringBuilder()
         sb.append("RIL(slot0)=${if (rilImei.isNullOrBlank()) "(空)" else rilImei}")
         if (debugSb.isNotBlank()) {
@@ -773,6 +921,18 @@ class DeviceIdModifier {
             if (txt.isBlank() || txt.contains("Exception") || txt.contains("Unknown")) continue
             val parsed = extractMeidFromParcel(txt)
             debugSb.append("iphonesubinfo.$svcId=${parsed ?: "(解析失败, raw=${txt.take(80)})"}\n")
+        }
+        // dumpsys telephony.registry 也尝试匹配 MEID
+        val teleReg = runRootShell("dumpsys telephony.registry 2>/dev/null").output.trim()
+        if (teleReg.isNotBlank()) {
+            val m = Regex("(?i)(meid|mMeid)[\\s:=]+([0-9a-fA-F]{14,18})").find(teleReg)
+            if (m != null) {
+                debugSb.append("telephony.registry.meid=${m.groupValues[2]}\n")
+            } else {
+                val m2 = Regex("\\b([0-9a-fA-F]{14})\\b").find(teleReg)
+                if (m2 != null) debugSb.append("telephony.registry.raw=${m2.value}\n")
+                else debugSb.append("telephony.registry=(无MEID匹配)\n")
+            }
         }
         val dumpOut = runRootShell("dumpsys iphonesubinfo 2>/dev/null").output.trim()
         if (dumpOut.isNotBlank()) {
@@ -1041,6 +1201,39 @@ class DeviceIdModifier {
             appendLine("可使用 restoreImei() 一键恢复")
         }
         return ShellResult(propResult.exitCode, summary)
+    }
+
+    fun writeImeiDual(imei1: String, imei2: String): ShellResult {
+        if (imei1.isBlank() && imei2.isBlank()) return ShellResult(-1, "IMEI1 和 IMEI2 不能同时为空")
+        if (imei1.isNotBlank() && !isValidImei15(imei1)) {
+            return ShellResult(-1, "IMEI1 必须是 15 位数字 + Luhn 校验和合规")
+        }
+        if (imei2.isNotBlank() && !isValidImei15(imei2)) {
+            return ShellResult(-1, "IMEI2 必须是 15 位数字 + Luhn 校验和合规")
+        }
+        val results = mutableListOf<String>()
+        if (imei1.isNotBlank()) {
+            val r1 = writeImei(imei1)
+            results.add("IMEI1: ${if (r1.exitCode == 0) "成功" else "失败: ${r1.output.take(100)}"}")
+        }
+        if (imei2.isNotBlank()) {
+            backupCurrentImei()
+            val esc = SuSession.getInstance().escapeShell(imei2).replace("\$", "\\$")
+            val cmds = mutableListOf<String>()
+            cmds.add("resetprop gsm.imei2 '$esc' 2>/dev/null || setprop gsm.imei2 '$esc' 2>/dev/null || true")
+            cmds.add("resetprop persist.sys.imei2 '$esc' 2>/dev/null || setprop persist.sys.imei2 '$esc' 2>/dev/null || true")
+            cmds.add("resetprop ril.imei2 '$esc' 2>/dev/null || setprop ril.imei2 '$esc' 2>/dev/null || true")
+            cmds.add("killall com.android.phone 2>/dev/null || true")
+            val shEsc = SuSession.getInstance().escapeShell(imei2)
+            upsertModuleProps(listOf(
+                "gsm.imei2" to shEsc,
+                "persist.sys.imei2" to shEsc,
+                "ril.imei2" to shEsc
+            ))
+            val r2 = runRootShell(cmds.joinToString("\n"))
+            results.add("IMEI2: ${if (r2.exitCode == 0) "成功" else "失败: ${r2.output.take(100)}"}")
+        }
+        return ShellResult(0, results.joinToString("\n"))
     }
 
     fun writeMeid(newMeid: String): ShellResult {
@@ -1497,7 +1690,11 @@ class DeviceIdModifier {
     }
 
     private fun runRootShell(command: String): ShellResult {
-        val result = SuSession.getInstance().execute(command)
+        val session = SuSession.getInstance()
+        if (!session.isSessionOpen()) {
+            session.open(timeoutSeconds = 30)
+        }
+        val result = session.execute(command)
         return ShellResult(result.exitCode, result.output)
     }
 }

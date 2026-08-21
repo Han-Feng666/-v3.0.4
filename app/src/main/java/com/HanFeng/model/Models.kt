@@ -281,3 +281,12 @@ sealed interface RuleListItem {
         val remainingCount: Int
     ) : RuleListItem
 }
+
+/** 弱网模拟参数（对标 QNET）。latencyMs=额外延迟, jitterMs=抖动, lossPercent=丢包率(0-100), down/upKbps=限速(0=不限) */
+data class WeakNetworkParams(
+    val latencyMs: Int = 0,
+    val jitterMs: Int = 0,
+    val lossPercent: Int = 0,
+    val downKbps: Int = 0,
+    val upKbps: Int = 0
+)

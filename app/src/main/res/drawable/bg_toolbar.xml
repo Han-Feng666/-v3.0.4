@@ -1,8 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <solid android:color="@color/hf_surface_strong" />
-    <corners android:topLeftRadius="20dp" android:topRightRadius="20dp" />
-    <stroke
-        android:width="1dp"
-        android:color="@color/hf_border" />
-</shape>
+<!-- Liquid Glass toolbar：可见玻璃体 + 边缘反光，顶部圆角 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#2EFFFFFF" />
+            <corners
+                android:bottomLeftRadius="0dp"
+                android:bottomRightRadius="0dp"
+                android:topLeftRadius="20dp"
+                android:topRightRadius="20dp" />
+        </shape>
+    </item>
+    <item android:bottom="1dp" android:left="1dp" android:right="1dp" android:top="1dp">
+        <shape android:shape="rectangle">
+            <corners
+                android:bottomLeftRadius="0dp"
+                android:bottomRightRadius="0dp"
+                android:topLeftRadius="19dp"
+                android:topRightRadius="19dp" />
+            <stroke
+                android:width="1dp"
+                android:color="#4DFFFFFF" />
+        </shape>
+    </item>
+    <!-- 底部冷蓝细描边 -->
+    <item
+        android:left="0dp"
+        android:right="0dp"
+        android:top="12dp">
+        <shape android:shape="rectangle">
+            <corners
+                android:bottomLeftRadius="0dp"
+                android:bottomRightRadius="0dp"
+                android:topLeftRadius="20dp"
+                android:topRightRadius="20dp" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/hf_glass_stroke_dim" />
+        </shape>
+    </item>
+</layer-list>

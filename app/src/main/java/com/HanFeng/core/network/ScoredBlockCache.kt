@@ -1,5 +1,7 @@
 package com.HanFeng.core.network
 
+import android.content.Context
+import android.content.SharedPreferences
 import com.HanFeng.data.RuleRepository
 import java.util.concurrent.ConcurrentHashMap
 
@@ -26,6 +28,9 @@ object ScoredBlockCache {
     private const val DOMAIN_CACHE_MAX = 2048
     private const val IP_CACHE_MAX = 1024
     private const val PRUNE_INTERVAL_MILLIS = 600_000L
+    private const val PREFS_NAME = "scored_block_cache"
+    private const val KEY_DOMAIN_BLOCKS = "domain_blocks"
+    private const val KEY_IP_BLOCKS = "ip_blocks"
 
     data class Entry(
         val expiresAt: Long,
@@ -37,6 +42,55 @@ object ScoredBlockCache {
     private val domainBlocks = ConcurrentHashMap<String, Entry>()
     private val ipBlocks = ConcurrentHashMap<String, Entry>()
     @Volatile private var lastPruneAt = 0L
+    private var prefs: SharedPreferences? = null
+
+    fun init(context: Context) {
+        prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        load()
+    }
+
+    fun save() {
+        val editor = prefs?.edit() ?: return
+        val now = System.currentTimeMillis()
+        val domainData = domainBlocks.entries
+            .filter { it.value.expiresAt > now }
+            .joinToString("|") { "${it.key},${it.value.expiresAt},${it.value.score},${it.value.vendor},${it.value.reason}" }
+        editor.putString(KEY_DOMAIN_BLOCKS, domainData)
+        val ipData = ipBlocks.entries
+            .filter { it.value.expiresAt > now }
+            .joinToString("|") { "${it.key},${it.value.expiresAt},${it.value.score},${it.value.vendor},${it.value.reason}" }
+        editor.putString(KEY_IP_BLOCKS, ipData)
+        editor.apply()
+    }
+
+    private fun load() {
+        val prefs = prefs ?: return
+        val domainData = prefs.getString(KEY_DOMAIN_BLOCKS, null) ?: return
+        val now = System.currentTimeMillis()
+        if (domainData.isNotBlank()) {
+            domainData.split("|").forEach { entry ->
+                val parts = entry.split(",", limit = 5)
+                if (parts.size == 5) {
+                    val expiresAt = parts[1].toLongOrNull() ?: return@forEach
+                    if (expiresAt > now) {
+                        domainBlocks[parts[0]] = Entry(expiresAt, parts[2].toIntOrNull() ?: return@forEach, parts[3], parts[4])
+                    }
+                }
+            }
+        }
+        val ipData = prefs.getString(KEY_IP_BLOCKS, null) ?: return
+        if (ipData.isNotBlank()) {
+            ipData.split("|").forEach { entry ->
+                val parts = entry.split(",", limit = 5)
+                if (parts.size == 5) {
+                    val expiresAt = parts[1].toLongOrNull() ?: return@forEach
+                    if (expiresAt > now) {
+                        ipBlocks[parts[0]] = Entry(expiresAt, parts[2].toIntOrNull() ?: return@forEach, parts[3], parts[4])
+                    }
+                }
+            }
+        }
+    }
 
     fun recordCandidate(
         domain: String,
@@ -62,6 +116,7 @@ object ScoredBlockCache {
             ipBlocks[normalizedIp] = Entry(expiresAt, score, vendor, reason)
         }
         pruneIfNeeded()
+        if (domainBlocks.size % 50 == 0) save()
     }
 
     fun isDomainBlocked(domain: String): Entry? {
@@ -122,5 +177,6 @@ object ScoredBlockCache {
         domainBlocks.clear()
         ipBlocks.clear()
         lastPruneAt = 0L
+        prefs?.edit()?.clear()?.apply()
     }
 }

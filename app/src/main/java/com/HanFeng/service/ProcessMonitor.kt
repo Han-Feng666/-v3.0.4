@@ -58,6 +58,22 @@ class ProcessMonitor private constructor(private val context: Context) {
             }
         }
 
+        /**
+         * 是否已有可用的 shell 后端(Shizuku 已授权或 root 可用),
+         * 供 UI 在"只能看到本应用"时判断是否需要引导用户授权.
+         */
+        fun isBackingShellAvailable(): Boolean {
+            val shizukuOk = runCatching {
+                Shizuku.pingBinder() &&
+                    Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED
+            }.getOrDefault(false)
+            if (shizukuOk) return true
+            return runCatching {
+                val session = com.HanFeng.adblocker.shizuku.SuSession.getInstance()
+                session.isSessionOpen() || session.open()
+            }.getOrDefault(false)
+        }
+
         fun formatMemorySize(bytes: Long): String {
             if (bytes <= 0) return "0"
             val kb = bytes / 1024.0
@@ -404,7 +420,27 @@ class ProcessMonitor private constructor(private val context: Context) {
     private suspend fun readProcRaw(): List<ProcRawData> {
         return withContext(Dispatchers.IO) {
             val cmd = buildProcReadCommand()
-            executeShell(cmd).map { parseProcLine(it) }.filterNotNull()
+            val result = executeShell(cmd).map { parseProcLine(it) }.filterNotNull()
+            if (result.isNotEmpty()) return@withContext result
+            val psCmd = "ps -A -o PID,UID,NAME 2>/dev/null | tail -n +2 | head -200"
+            val psResult = executeShell(psCmd).mapNotNull { line ->
+                val parts = line.trim().split(Regex("\\s+"))
+                if (parts.size < 3) return@mapNotNull null
+                val pid = parts[0].toIntOrNull() ?: return@mapNotNull null
+                val uid = parts[1].toIntOrNull() ?: return@mapNotNull null
+                if (uid != 1000 && uid < 10000) return@mapNotNull null
+                val comm = parts.drop(2).joinToString(" ")
+                val statOut = executeShell("cat /proc/$pid/stat 2>/dev/null | sed 's/.*) //'")
+                val statmOut = executeShell("cut -d' ' -f2 /proc/$pid/statm 2>/dev/null")
+                if (statOut.isEmpty() || statmOut.isEmpty()) return@mapNotNull null
+                val statParts = statOut.first().trim().split(" ")
+                val utime = statParts.getOrNull(12)?.toLongOrNull() ?: 0L
+                val stime = statParts.getOrNull(13)?.toLongOrNull() ?: 0L
+                val rssPages = statmOut.first().trim().toLongOrNull() ?: 0L
+                ProcRawData(pid, uid, comm, rssPages, utime, stime)
+            }
+            if (psResult.isNotEmpty()) return@withContext psResult
+            result
         }
     }
 

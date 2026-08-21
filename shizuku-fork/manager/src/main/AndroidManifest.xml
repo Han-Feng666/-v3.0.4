@@ -43,18 +43,18 @@
     <!--
       兼容官方 Shizuku SDK (dev.rikka.shizuku:api / dev.rikka.shizuku:provider) 客户端声明:
       第三方 APP 的 manifest 里通常只写 <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />。
-      不声明同名 <permission> 元素,系统就把该串视作未定义权限——
-      PermissionManagerApis.checkPermission / grantRuntimePermission 在某些 ROM 上会一律拒绝。
-      fork 同时声明一份同名 <permission> 让这一类官方 SDK 客户端的运行时权限查询能落到本权威定义,
-      protectionLevel=dangerous 与官方保持一致,允许第三方 APP 申请并通过用户授权拿到。
+      本 fork 不定义同名 <permission> 元素(仅 uses-permission),原因:
+      (1) 若由 fork 定义该权限,官方 Shizuku APK(moe.shizuku.privileged.api)安装时会因
+          INSTALL_FAILED_DUPLICATE_PERMISSION 与 com.HanFeng 冲突而无法共存;
+      (2) 该权限的权威定义交由官方 Shizuku APP 持有(官方定义为 signature 级),
+          官方 SDK 客户端的运行时权限查询/授予由官方定义支撑;
+      (3) 未安装官方 Shizuku 时,本 fork 的授权体系走 com.HanFeng.permission.shizuku.API_V23,
+          server 端 ServerConstants.isClientPermissionRequested 同时识别官方权限名串,
+          通过 grantRuntimePermission 直接授予。
     -->
-    <permission
+    <uses-permission
         android:name="moe.shizuku.manager.permission.API_V23"
-        android:description="@string/permission_description"
-        android:icon="@drawable/ic_system_icon"
-        android:label="@string/permission_label"
-        android:permissionGroup="com.HanFeng.permission.shizuku-group.API"
-        android:protectionLevel="dangerous" />
+        tools:ignore="ProtectedPermissions" />
 
     <permission
         android:name="${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"

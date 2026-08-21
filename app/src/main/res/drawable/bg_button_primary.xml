@@ -1,20 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Liquid Glass primary button：品牌蓝玻璃体 + 双层边缘反光，无内部白线 -->
 <ripple xmlns:android="http://schemas.android.com/apk/res/android"
-    android:color="#330A73CC">
+    android:color="#335B8DF0">
     <item android:id="@+id/mask">
         <shape android:shape="rectangle">
-            <solid android:color="@color/hf_button_primary" />
+            <solid android:color="@color/hf_glass_primary_mid" />
             <corners android:radius="14dp" />
         </shape>
     </item>
     <item>
-        <shape android:shape="rectangle">
-            <gradient
-                android:angle="0"
-                android:startColor="@color/hf_brand_primary"
-                android:endColor="@color/hf_brand_primary_dark" />
-            <corners android:radius="14dp" />
-            <stroke android:width="0dp" android:color="@android:color/transparent" />
-        </shape>
+        <layer-list>
+            <item>
+                <shape android:shape="rectangle">
+                    <gradient
+                        android:angle="270"
+                        android:centerColor="@color/hf_glass_primary_mid"
+                        android:endColor="@color/hf_glass_primary_bottom"
+                        android:startColor="@color/hf_glass_primary_top" />
+                    <corners android:radius="14dp" />
+                </shape>
+            </item>
+            <item>
+                <shape android:shape="rectangle">
+                    <corners android:radius="14dp" />
+                    <stroke
+                        android:width="1dp"
+                        android:color="#66FFFFFF" />
+                </shape>
+            </item>
+            <item android:bottom="1dp" android:left="1dp" android:right="1dp" android:top="1dp">
+                <shape android:shape="rectangle">
+                    <corners android:radius="13dp" />
+                    <stroke
+                        android:width="1dp"
+                        android:color="#338FD9FF" />
+                </shape>
+            </item>
+        </layer-list>
     </item>
 </ripple>

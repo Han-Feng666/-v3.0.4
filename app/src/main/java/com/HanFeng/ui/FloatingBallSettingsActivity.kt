@@ -49,6 +49,8 @@ class FloatingBallSettingsActivity : AppCompatActivity() {
         seekScale = findViewById(R.id.seekScale)
         tvScaleLabel = findViewById(R.id.tvScaleLabel)
 
+        ensureAppBackground()
+
         syncUiFromPrefs()
 
         switchEnable.setOnCheckedChangeListener { _, isChecked ->

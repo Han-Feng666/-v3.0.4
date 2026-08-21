@@ -23,7 +23,9 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.HanFeng.R
+import com.HanFeng.data.ShizukuRepository
 import com.HanFeng.service.ProcessMonitor
+import rikka.shizuku.Shizuku
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -46,13 +48,31 @@ class RunningAppsActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_running_apps)
 
+        ensureAppBackground()
+
         rvList = findViewById(R.id.rvRunningApps)
         tvSummary = findViewById(R.id.tvRunningSummary)
         rgSort = findViewById(R.id.rgSort)
         findViewById<TextView>(R.id.btnBack).setOnClickListener { finish() }
 
-        // 隐藏 "授权" 按钮 — Shizuku /proc 扫描不需要使用情况权限
-        findViewById<Button>(R.id.btnGrantUsage).visibility = View.GONE
+        // Root/shizuku 未就绪时，显示授权引导按钮 (两个权限源任一可用即隐藏)
+        val grantBtn = findViewById<Button>(R.id.btnGrantUsage)
+        val shizukuOk = runCatching {
+            Shizuku.pingBinder() &&
+                Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED
+        }.getOrDefault(false)
+        val rootOk = runCatching {
+            ProcessMonitor.isBackingShellAvailable()
+        }.getOrDefault(false)
+        if (shizukuOk || rootOk) {
+            grantBtn.visibility = View.GONE
+        } else {
+            grantBtn.text = "点击启动 Shizuku 并授权以查看全部进程"
+            grantBtn.visibility = View.VISIBLE
+            grantBtn.setOnClickListener {
+                ShizukuRepository.requestPermission()
+            }
+        }
 
         adapter = RunningAppsAdapter(this)
         rvList.layoutManager = LinearLayoutManager(this)
@@ -130,6 +150,36 @@ class RunningAppsActivity : AppCompatActivity() {
         collectionJob = null
         val monitor = ProcessMonitor.getInstance(this)
         monitor.stopSampling()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != ShizukuRepository.REQUEST_CODE) return
+        // Shizuku 授权走 onActivityResult, 这里兜底处理直接返回的情况
+        refreshShellStatus()
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != ShizukuRepository.REQUEST_CODE) return
+        refreshShellStatus()
+    }
+
+    private fun refreshShellStatus() {
+        // 授权成功后隐藏引导按钮, 并立即重启采样
+        val shizukuOk = runCatching {
+            Shizuku.pingBinder() &&
+                Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED
+        }.getOrDefault(false)
+        val rootOk = runCatching {
+            ProcessMonitor.isBackingShellAvailable()
+        }.getOrDefault(false)
+        findViewById<Button>(R.id.btnGrantUsage).visibility =
+            if (shizukuOk || rootOk) View.GONE else View.VISIBLE
+        if (shizukuOk || rootOk) {
+            stopCollection()
+            startCollection()
+        }
     }
 }
 

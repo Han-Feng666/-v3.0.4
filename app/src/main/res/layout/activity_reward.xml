@@ -36,7 +36,7 @@
             android:layout_height="280dp"
             android:layout_gravity="center"
             android:layout_marginTop="20dp"
-            android:background="#33FFFFFF"
+            android:background="@drawable/bg_panel"
             android:contentDescription="赞赏码"
             android:padding="8dp"
             android:scaleType="fitCenter" />

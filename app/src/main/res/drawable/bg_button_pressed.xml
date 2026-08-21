@@ -1,8 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <solid android:color="@color/hf_surface_strong" />
-    <corners android:radius="30dp" />
-    <stroke
-        android:width="1dp"
-        android:color="@color/hf_border" />
-</shape>
+<!-- Liquid Glass secondary button (pressed)：玻璃体加深，边缘反光增强 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:centerColor="#3DFFFFFF"
+                android:endColor="#2AFFFFFF"
+                android:startColor="#52FFFFFF" />
+            <corners android:radius="30dp" />
+        </shape>
+    </item>
+    <item android:left="1dp" android:right="1dp" android:top="10dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:centerColor="@android:color/transparent"
+                android:endColor="@color/hf_glass_inner_shadow"
+                android:startColor="@android:color/transparent" />
+            <corners android:radius="30dp" />
+        </shape>
+    </item>
+    <item android:bottom="1dp" android:left="1dp" android:right="1dp" android:top="1dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="29dp" />
+            <stroke
+                android:width="1dp"
+                android:color="#70FFFFFF" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="30dp" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/hf_glass_stroke" />
+        </shape>
+    </item>
+</layer-list>

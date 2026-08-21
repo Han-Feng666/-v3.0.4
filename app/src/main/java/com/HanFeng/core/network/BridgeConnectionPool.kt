@@ -5,8 +5,8 @@ import java.net.Socket
 import java.util.LinkedHashMap
 
 object BridgeConnectionPool {
-    private const val MAX_POOLED_CONNECTIONS = 16
-    private const val POOLED_CONNECTION_TTL_MILLIS = 30_000L
+    private const val MAX_POOLED_CONNECTIONS = 32
+    private const val POOLED_CONNECTION_TTL_MILLIS = 60_000L
 
     private data class PooledSocket(
         val socket: Socket,

@@ -191,6 +191,27 @@ object DnsMessageParser {
         return targets.toList()
     }
 
+    fun extractAllCnameTargets(response: ByteArray): List<String> {
+        val targets = linkedSetOf<String>()
+        forEachAnswerRecordUnsafe(response) { _, type, offset, _ ->
+            if (type == TYPE_CNAME) {
+                decodeName(response, offset)?.let { targets += it.lowercase() }
+            }
+        }
+        return targets.toList()
+    }
+
+    fun extractAllAnswerAddresses(response: ByteArray): List<ByteArray> {
+        val results = mutableListOf<ByteArray>()
+        forEachAnswerRecordUnsafe(response) { _, type, offset, dataLength ->
+            when {
+                type == TYPE_A && dataLength == 4 -> results += response.copyOfRange(offset, offset + 4)
+                type == TYPE_AAAA && dataLength == 16 -> results += response.copyOfRange(offset, offset + 16)
+            }
+        }
+        return results
+    }
+
     fun negativeCacheTtlMillis(fallbackSeconds: Long = 15L): Long {
         return fallbackSeconds.coerceIn(5L, 30L) * 1000L
     }
@@ -214,6 +235,32 @@ object DnsMessageParser {
         if (response.size < 12) return
         val parsedQuestion = parseQuestion(response) ?: return
         if (!parsedQuestion.domain.equals(question.domain, ignoreCase = true)) return
+        val questionCount = readShort(response, 4)
+        val totalRecordCount = totalRecordCount(response)
+        if (questionCount <= 0 || totalRecordCount <= 0) return
+        var offset = 12
+        repeat(questionCount) {
+            offset = skipName(response, offset) ?: return
+            if (offset + 4 > response.size) return
+            offset += 4
+        }
+        repeat(totalRecordCount) { index ->
+            offset = skipName(response, offset) ?: return@repeat
+            if (offset + 10 > response.size) return@repeat
+            val type = readShort(response, offset)
+            val dataLength = readShort(response, offset + 8)
+            offset += 10
+            if (offset + dataLength > response.size) return@repeat
+            block(index, type, offset, dataLength)
+            offset += dataLength
+        }
+    }
+
+    private fun forEachAnswerRecordUnsafe(
+        response: ByteArray,
+        block: (index: Int, type: Int, dataOffset: Int, dataLength: Int) -> Unit
+    ) {
+        if (response.size < 12) return
         val questionCount = readShort(response, 4)
         val totalRecordCount = totalRecordCount(response)
         if (questionCount <= 0 || totalRecordCount <= 0) return

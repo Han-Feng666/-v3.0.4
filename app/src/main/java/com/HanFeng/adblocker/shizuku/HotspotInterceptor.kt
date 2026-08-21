@@ -25,13 +25,20 @@ object HotspotInterceptor {
     @Volatile
     private var blockedQueryCount: Long = 0
 
+    @Volatile
+    private var embeddedProxy: EmbeddedDnsProxy? = null
+
+    @Volatile
+    private var isUsingEmbeddedProxy: Boolean = false
+
     data class HotspotStatus(
         val running: Boolean,
         val interfaceName: String?,
         val connectedDevices: List<ConnectedDevice>,
         val dnsmasqPath: String?,
         val iptablesRules: Int,
-        val blockedQueries: Long
+        val blockedQueries: Long,
+        val usingEmbedded: Boolean = false
     )
 
     data class ConnectedDevice(
@@ -102,28 +109,40 @@ object HotspotInterceptor {
         }
 
         val dnsmasqPath = findOrDetectDnsmasq(session)
-        if (dnsmasqPath == null) {
-            LogRepository.append(context, "Hotspot DNS hijack: dnsmasq not found on device")
-            return false
+        var running = false
+        if (dnsmasqPath != null) {
+            val startCmd = "$dnsmasqPath --conf-file='$remoteConf' --pid-file='$DNSMASQ_PID' 2>&1"
+            val startResult = session.execute(startCmd, 10)
+            val checkResult = session.execute("test -f '$DNSMASQ_PID' && cat '$DNSMASQ_PID' && echo RUNNING || echo NOTRUNNING", 5)
+            running = checkResult.output.contains("RUNNING")
+            if (running) {
+                isUsingEmbeddedProxy = false
+                val iface = setupIptablesRedirect(context, session)
+                currentHotspotInterface = iface
+                lastRestartTime = System.currentTimeMillis()
+                blockedQueryCount = 0
+                LogRepository.append(context, "Hotspot DNS hijack started: dnsmasq=$dnsmasqPath port=$DNSMASQ_PORT rules=${rules.size} interface=${iface ?: "all"}")
+                return true
+            }
+            LogRepository.append(context, "Hotspot DNS hijack: dnsmasq found but failed to start, trying embedded proxy")
+        } else {
+            LogRepository.append(context, "Hotspot DNS hijack: dnsmasq not found, trying embedded DNS proxy")
         }
 
-        val startCmd = "$dnsmasqPath --conf-file='$remoteConf' --pid-file='$DNSMASQ_PID' 2>&1"
-        val startResult = session.execute(startCmd, 10)
-
-        val checkResult = session.execute("test -f '$DNSMASQ_PID' && cat '$DNSMASQ_PID' && echo RUNNING || echo NOTRUNNING", 5)
-        val running = checkResult.output.contains("RUNNING")
-
-        if (running) {
+        val proxy = EmbeddedDnsProxy(context, DNSMASQ_PORT)
+        if (proxy.start()) {
+            embeddedProxy = proxy
+            isUsingEmbeddedProxy = true
             val iface = setupIptablesRedirect(context, session)
             currentHotspotInterface = iface
             lastRestartTime = System.currentTimeMillis()
             blockedQueryCount = 0
-            LogRepository.append(context, "Hotspot DNS hijack started: dnsmasq=$dnsmasqPath port=$DNSMASQ_PORT rules=${rules.size} interface=${iface ?: "all"}")
-        } else {
-            LogRepository.append(context, "Hotspot DNS hijack failed to start: ${startResult.output.take(200)}")
+            LogRepository.append(context, "Hotspot DNS hijack started: embedded proxy port=$DNSMASQ_PORT rules=${rules.size} interface=${iface ?: "all"}")
+            return true
         }
 
-        return running
+        LogRepository.append(context, "Hotspot DNS hijack: both dnsmasq and embedded proxy failed")
+        return false
     }
 
     private fun findOrDetectDnsmasq(session: SuSession): String? {
@@ -213,12 +232,19 @@ object HotspotInterceptor {
         session.execute("pkill -f hf_dnsmasq 2>/dev/null", 3)
         session.execute("rm -f '$DNSMASQ_CONF' '$HOSTS_FILE' '$TMP_DIR/hf_dnsmasq.log'", 3)
 
+        embeddedProxy?.stop()
+        embeddedProxy = null
+        isUsingEmbeddedProxy = false
+
         currentHotspotInterface = null
         blockedQueryCount = 0
         LogRepository.append(context, "Hotspot DNS hijack stopped")
     }
 
     fun isDnsHijackRunning(): Boolean {
+        if (isUsingEmbeddedProxy) {
+            return embeddedProxy?.isRunning() == true
+        }
         val session = SuSession.getInstance()
         if (!session.isSessionOpen()) return false
         val result = session.execute("test -f '$DNSMASQ_PID' && kill -0 \$(cat '$DNSMASQ_PID') 2>/dev/null && echo RUNNING || echo NOTRUNNING", 5)
@@ -234,17 +260,21 @@ object HotspotInterceptor {
     fun getHotspotStatus(context: Context): HotspotStatus {
         val session = SuSession.getInstance()
         if (!session.isSessionOpen()) {
-            return HotspotStatus(false, null, emptyList(), null, 0, blockedQueryCount)
+            return HotspotStatus(false, null, emptyList(), null, 0, blockedQueryCount, usingEmbedded = isUsingEmbeddedProxy)
         }
 
         val running = isDnsHijackRunning()
         val iface = currentHotspotInterface ?: detectHotspotInterface(session)
         val devices = if (iface != null) detectConnectedDevices(session, iface) else emptyList()
-        val dnsmasqPath = findOrDetectDnsmasq(session)
+        val dnsmasqPath = if (isUsingEmbeddedProxy) null else findOrDetectDnsmasq(session)
         val iptablesRules = countIptablesRules(session)
-        val queries = if (running) readBlockedQueryCount(context, session) else blockedQueryCount
+        val queries = if (running) {
+            if (isUsingEmbeddedProxy) embeddedProxy?.getBlockedCount() ?: blockedQueryCount else readBlockedQueryCount(context, session)
+        } else {
+            blockedQueryCount
+        }
 
-        return HotspotStatus(running, iface, devices, dnsmasqPath, iptablesRules, queries)
+        return HotspotStatus(running, iface, devices, dnsmasqPath, iptablesRules, queries, usingEmbedded = isUsingEmbeddedProxy)
     }
 
     private fun detectConnectedDevices(session: SuSession, interfaceName: String): List<ConnectedDevice> {
@@ -300,7 +330,7 @@ object HotspotInterceptor {
         if (!isDnsHijackRunning()) {
             val now = System.currentTimeMillis()
             if (now - lastRestartTime > AUTO_RESTART_INTERVAL_MS) {
-                LogRepository.append(context, "Hotspot DNS hijack: dnsmasq crashed, attempting auto-restart")
+                LogRepository.append(context, "Hotspot DNS hijack: proxy crashed, attempting auto-restart")
                 val success = startDnsHijack(context)
                 if (success) {
                     LogRepository.append(context, "Hotspot DNS hijack: auto-restart successful")

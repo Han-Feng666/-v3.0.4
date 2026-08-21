@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Liquid Glass input：可见玻璃体 + 边缘反光，无内部白线 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true">
+        <layer-list>
+            <item>
+                <shape android:shape="rectangle">
+                    <gradient
+                        android:angle="270"
+                        android:centerColor="#36FFFFFF"
+                        android:endColor="#22FFFFFF"
+                        android:startColor="#48FFFFFF" />
+                    <corners android:radius="10dp" />
+                </shape>
+            </item>
+            <item android:top="10dp">
+                <shape android:shape="rectangle">
+                    <gradient
+                        android:angle="270"
+                        android:centerColor="@android:color/transparent"
+                        android:endColor="@color/hf_glass_inner_shadow"
+                        android:startColor="@android:color/transparent" />
+                    <corners android:radius="10dp" />
+                </shape>
+            </item>
+            <item android:bottom="1dp" android:left="1dp" android:right="1dp" android:top="1dp">
+                <shape android:shape="rectangle">
+                    <corners android:radius="9dp" />
+                    <stroke
+                        android:width="1dp"
+                        android:color="#52FFFFFF" />
+                </shape>
+            </item>
+            <item>
+                <shape android:shape="rectangle">
+                    <corners android:radius="10dp" />
+                    <stroke
+                        android:width="1dp"
+                        android:color="@color/hf_glass_stroke" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+    <item>
+        <layer-list>
+            <item>
+                <shape android:shape="rectangle">
+                    <gradient
+                        android:angle="270"
+                        android:centerColor="#2EFFFFFF"
+                        android:endColor="#1FFFFFFF"
+                        android:startColor="#42FFFFFF" />
+                    <corners android:radius="10dp" />
+                </shape>
+            </item>
+            <item android:top="10dp">
+                <shape android:shape="rectangle">
+                    <gradient
+                        android:angle="270"
+                        android:centerColor="@android:color/transparent"
+                        android:endColor="@color/hf_glass_inner_shadow"
+                        android:startColor="@android:color/transparent" />
+                    <corners android:radius="10dp" />
+                </shape>
+            </item>
+            <item android:bottom="1dp" android:left="1dp" android:right="1dp" android:top="1dp">
+                <shape android:shape="rectangle">
+                    <corners android:radius="9dp" />
+                    <stroke
+                        android:width="1dp"
+                        android:color="#4DFFFFFF" />
+                </shape>
+            </item>
+            <item>
+                <shape android:shape="rectangle">
+                    <corners android:radius="10dp" />
+                    <stroke
+                        android:width="1dp"
+                        android:color="@color/hf_glass_stroke" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+</selector>

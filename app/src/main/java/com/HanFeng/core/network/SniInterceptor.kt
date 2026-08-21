@@ -27,7 +27,7 @@ object SniInterceptor {
         val reason: String
     )
 
-    private const val SNI_CACHE_TTL_MS = 30_000L
+    private const val SNI_CACHE_TTL_MS = 300_000L
     private const val SNI_CACHE_MAX = 4096
 
     private data class CachedSniDecision(
@@ -167,6 +167,12 @@ object SniInterceptor {
     private fun cacheDecision(sniHost: String, decision: SniBlockDecision) {
         synchronized(sniCacheLock) {
             sniCache[sniHost] = CachedSniDecision(decision, System.currentTimeMillis())
+        }
+    }
+
+    fun clearCache() {
+        synchronized(sniCacheLock) {
+            sniCache.clear()
         }
     }
 }

@@ -38,6 +38,9 @@ object LogRepository {
     private var snapshotExportJob: Job? = null
     private val droppedLogCount = AtomicInteger(0)
     @Volatile private var currentLogSessionId: String? = null
+    private val decisionEntriesCacheLock = Any()
+    @Volatile private var cachedDecisionEntries: List<DomainDecisionEntry>? = null
+    @Volatile private var cachedDecisionEntriesSignature = -1L
     @Volatile private var lastWriterFlushAt = 0L
     @Volatile private var lastFileTruncateAt = 0L
     private const val WRITER_FLUSH_INTERVAL_MILLIS = 500L
@@ -217,6 +220,13 @@ object LogRepository {
     fun getDomainDecisionEntries(context: Context): List<DomainDecisionEntry> {
         val file = logFile(context)
         if (!file.exists()) return emptyList()
+        val fileSignature = (file.lastModified() shl 32) xor file.length()
+        synchronized(decisionEntriesCacheLock) {
+            val cached = cachedDecisionEntries
+            if (cached != null && cachedDecisionEntriesSignature == fileSignature) {
+                return cached
+            }
+        }
         val latestByKey = linkedMapOf<String, DomainDecisionEntry>()
         try {
             file.forEachLine { rawLine ->
@@ -270,7 +280,13 @@ object LogRepository {
                 seenKeys += key
             }
         }
-        return corrected.values.sortedByDescending(DomainDecisionEntry::timestamp)
+        val result = corrected.values.sortedByDescending(DomainDecisionEntry::timestamp)
+        val newSignature = (file.lastModified() shl 32) xor file.length()
+        synchronized(decisionEntriesCacheLock) {
+            cachedDecisionEntries = result
+            cachedDecisionEntriesSignature = newSignature
+        }
+        return result
     }
 
     private fun parseDomainDecision(timestamp: Long, message: String): DomainDecisionEntry? {
@@ -480,7 +496,7 @@ object LogRepository {
         val scope: DecisionScope = DecisionScope.DOMAIN
     )
 
-    fun toggleDomainDecision(context: Context, domain: String, currentType: DomainDecisionType) {
+fun toggleDomainDecision(context: Context, domain: String, currentType: DomainDecisionType) {
         val newType = if (currentType == DomainDecisionType.BLOCKED) DomainDecisionType.ALLOWED else DomainDecisionType.BLOCKED
         val message = if (newType == DomainDecisionType.BLOCKED) {
             "Blocked request domain=$domain via manual-toggle app=user"
@@ -490,10 +506,10 @@ object LogRepository {
         append(context, "[DecisionToggle] 域名 $domain 已从 ${if (currentType == DomainDecisionType.BLOCKED) "拦截" else "放行"} 切换为 ${if (newType == DomainDecisionType.BLOCKED) "拦截" else "放行"}")
         append(context, message)
 
+        val rules = RuleRepository.getRules(context)
         if (newType == DomainDecisionType.BLOCKED) {
-            val rules = RuleRepository.getRules(context)
             val exceptionIds = rules.filter {
-                it.domain.equals(domain, ignoreCase = true) && it.source == RuleSource.MANUAL && it.exceptionRule
+                it.domain.equals(domain, ignoreCase = true) && it.exceptionRule
             }.map { it.id }.toSet()
             if (exceptionIds.isNotEmpty()) {
                 val removed = RuleRepository.removeRulesByIds(context, exceptionIds)
@@ -504,18 +520,19 @@ object LogRepository {
                 append(context, "已同步添加拦截规则: $domain")
             }
         } else {
-            val rules = RuleRepository.getRules(context)
-            val manualIds = rules.filter {
-                it.domain.equals(domain, ignoreCase = true) && it.source == RuleSource.MANUAL && !it.exceptionRule
+            val allRuleIds = rules.filter {
+                it.domain.equals(domain, ignoreCase = true) && !it.exceptionRule
             }.map { it.id }.toSet()
-            if (manualIds.isNotEmpty()) {
-                val removed = RuleRepository.removeRulesByIds(context, manualIds)
-                append(context, "已同步移除 $removed 条拦截规则")
+            if (allRuleIds.isNotEmpty()) {
+                val removed = RuleRepository.removeRulesByIds(context, allRuleIds)
+                append(context, "已同步移除 $removed 条拦截规则（含非手动来源）")
             }
             val exceptionRule = RuleRepository.addExceptionRule(context, domain)
             if (exceptionRule != null) {
                 append(context, "已同步添加放行规则: $domain")
             }
         }
+        RuleRepository.refreshCaches(context)
+        com.HanFeng.core.network.NetworkKernel.flushCachesIfRunning(context)
     }
 }

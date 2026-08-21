@@ -1,16 +1,62 @@
 package com.HanFeng.core.network
 
+import android.content.Context
+import android.content.SharedPreferences
 import android.system.OsConstants
 import com.HanFeng.data.RuleRepository
 import com.HanFeng.model.PacketInfo
 import java.net.InetAddress
 
 object TrafficDecisionEngine {
+    private const val PREFS_NAME = "traffic_decision_engine"
+    private const val KEY_QUIC_BLOCKED_CIDRS = "quic_blocked_cidrs"
+    private const val KEY_QUIC_CIDR_HIT_COUNTS = "quic_cidr_hit_counts"
+
     private val quicBlockedCidrs = mutableSetOf<String>()
     private val quicCidrHitCounts = mutableMapOf<String, Int>()
     private const val CIDR_HIT_THRESHOLD = 3
     private const val CIDR_EXPIRE_MILLIS = 3600_000L
     private var cidrLastPrune = 0L
+    private var prefs: SharedPreferences? = null
+
+    fun init(context: Context) {
+        prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        loadPersistedState()
+    }
+
+    private fun loadPersistedState() {
+        val prefs = prefs ?: return
+        val cidrsStr = prefs.getString(KEY_QUIC_BLOCKED_CIDRS, null) ?: return
+        if (cidrsStr.isBlank()) return
+        synchronized(quicBlockedCidrs) {
+            quicBlockedCidrs.clear()
+            cidrsStr.split(",").filter { it.isNotBlank() }.forEach { quicBlockedCidrs.add(it) }
+        }
+        val hitCountsStr = prefs.getString(KEY_QUIC_CIDR_HIT_COUNTS, null)
+        if (!hitCountsStr.isNullOrBlank()) {
+            synchronized(quicCidrHitCounts) {
+                quicCidrHitCounts.clear()
+                hitCountsStr.split(",").forEach { entry ->
+                    val parts = entry.split("=")
+                    if (parts.size == 2) {
+                        val count = parts[1].toIntOrNull()
+                        if (count != null) quicCidrHitCounts[parts[0]] = count
+                    }
+                }
+            }
+        }
+    }
+
+    private fun savePersistedState() {
+        val editor = prefs?.edit() ?: return
+        synchronized(quicBlockedCidrs) {
+            editor.putString(KEY_QUIC_BLOCKED_CIDRS, quicBlockedCidrs.joinToString(","))
+        }
+        synchronized(quicCidrHitCounts) {
+            editor.putString(KEY_QUIC_CIDR_HIT_COUNTS, quicCidrHitCounts.map { "${it.key}=${it.value}" }.joinToString(","))
+        }
+        editor.apply()
+    }
 
     data class QuicBlockInput(
         val packet: PacketInfo,
@@ -90,7 +136,7 @@ object TrafficDecisionEngine {
         val vendor = input.vendor.orEmpty()
         if (domain.isBlank()) {
             if (input.globalMitmFullCapture && input.bypassReason == null) {
-                if (RuleRepository.isAggressiveAdAppHint(appName) || RuleRepository.isCommunityAppHint(appName)) {
+                if (RuleRepository.isAggressiveAdAppHint(appName) || RuleRepository.isCommunityAppHint(appName) || RuleRepository.isNovelAppHint(appName)) {
                     return QuicDecision(blocked = true, reason = "global-mitm-force-tcp")
                 }
             }
@@ -114,7 +160,7 @@ object TrafficDecisionEngine {
             return QuicDecision(blocked = true, reason = "general-ad-traffic")
         }
         if (input.globalMitmFullCapture && input.hasHttpsTarget && input.bypassReason == null) {
-            if (RuleRepository.isAggressiveAdAppHint(appName) || RuleRepository.isCommunityAppHint(appName)) {
+            if (RuleRepository.isAggressiveAdAppHint(appName) || RuleRepository.isCommunityAppHint(appName) || RuleRepository.isNovelAppHint(appName)) {
                 return QuicDecision(blocked = true, reason = "global-mitm-force-tcp")
             }
         }
@@ -233,6 +279,7 @@ object TrafficDecisionEngine {
             if (count >= CIDR_HIT_THRESHOLD) {
                 synchronized(quicBlockedCidrs) { quicBlockedCidrs.add(cidr) }
                 quicCidrHitCounts.remove(cidr)
+                savePersistedState()
             }
         }
     }
@@ -259,5 +306,6 @@ object TrafficDecisionEngine {
         synchronized(quicBlockedCidrs) { quicBlockedCidrs.clear() }
         synchronized(quicCidrHitCounts) { quicCidrHitCounts.clear() }
         cidrLastPrune = 0L
+        prefs?.edit()?.clear()?.apply()
     }
 }

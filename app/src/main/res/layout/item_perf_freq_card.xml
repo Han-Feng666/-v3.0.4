@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="6dp"
+    android:background="@drawable/bg_combo_panel"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:padding="8dp">
+
+    <TextView
+        android:id="@+id/tvCoreName"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginRight="8dp"
+        android:minWidth="48dp"
+        android:text="核心0"
+        android:textColor="@color/hf_text_primary"
+        android:textSize="13sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="最小"
+        android:textColor="@color/hf_text_secondary"
+        android:textSize="11sp" />
+
+    <EditText
+        android:id="@+id/etMinFreq"
+        android:layout_width="0dp"
+        android:layout_height="32dp"
+        android:layout_weight="1"
+        android:layout_marginLeft="4dp"
+        android:background="@drawable/bg_input"
+        android:gravity="center"
+        android:importantForAutofill="no"
+        android:inputType="number"
+        android:maxLength="6"
+        android:padding="2dp"
+        android:textColor="@color/hf_text_primary"
+        android:textColorHint="@color/hf_text_hint"
+        android:textSize="12sp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginLeft="8dp"
+        android:text="最大"
+        android:textColor="@color/hf_text_secondary"
+        android:textSize="11sp" />
+
+    <EditText
+        android:id="@+id/etMaxFreq"
+        android:layout_width="0dp"
+        android:layout_height="32dp"
+        android:layout_weight="1"
+        android:layout_marginLeft="4dp"
+        android:background="@drawable/bg_input"
+        android:gravity="center"
+        android:importantForAutofill="no"
+        android:inputType="number"
+        android:maxLength="6"
+        android:padding="2dp"
+        android:textColor="@color/hf_text_primary"
+        android:textColorHint="@color/hf_text_hint"
+        android:textSize="12sp" />
+
+    <Button
+        android:id="@+id/btnApplyFreq"
+        android:layout_width="48dp"
+        android:layout_height="32dp"
+        android:layout_marginLeft="6dp"
+        android:background="@drawable/bg_button_primary"
+        android:backgroundTint="@null"
+        android:minWidth="0dp"
+        android:minHeight="0dp"
+        android:padding="0dp"
+        android:text="应用"
+        android:textAllCaps="false"
+        android:textColor="@color/hf_button_primary_text"
+        android:textSize="12sp" />
+
+</LinearLayout>

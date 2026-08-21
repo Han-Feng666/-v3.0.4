@@ -10,7 +10,14 @@ object RuleProtectionSupport {
     )
     private val aggressiveNovelAdStrongSignals = listOf(
         "pangolin", "pangle", "gromore", "oceanengine", "adservice", "adserver", "adtrack",
-        "adsdk", "unionad", "mediation", "rtb", "dsp", "ssp", "reward", "splash", "interstitial"
+        "adsdk", "unionad", "mediation", "rtb", "dsp", "ssp", "reward", "splash", "interstitial",
+        "offerwall", "bidder", "bidrequest", "bidresponse", "auction", "waterfall",
+        "adx", "adnetwork", "adplatform", "admanager", "advertising", "advertisement",
+        "admaterial", "creative", "impression", "playable", "endcard", "skadn",
+        "appsflyer", "adjust", "kochava", "singular", "branch",
+        "mintegral", "mobvista", "applovin", "applvn", "vungle", "ironsrc", "chartboost",
+        "adcolony", "tapjoy", "inmobi", "unityads", "supersonic", "liftoff",
+        "topon", "tradplus", "adscope", "beizi", "sigmob", "fyber"
     )
 
     fun matchesExactOrSubdomain(domain: String, protectedDomains: Set<String>): Boolean {

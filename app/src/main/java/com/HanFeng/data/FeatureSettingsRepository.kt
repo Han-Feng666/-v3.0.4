@@ -4,6 +4,8 @@ import android.content.Context
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.HanFeng.model.PendingFeedbackRule
+import com.HanFeng.model.VolumeKeyAction
+import com.HanFeng.model.WeakNetworkParams
 
 object FeatureSettingsRepository {
     private const val PREFS = "feature_settings"
@@ -471,8 +473,9 @@ object FeatureSettingsRepository {
                 .edit()
                 .putString(KEY_CUSTOM_BACKGROUND_LIST, gson.toJson(filtered))
                 .apply()
-            // 索引可能越界，校正
-            val idx = getActiveBackgroundIndex(context).coerceIn(0, filtered.size - 1)
+            // 索引可能越界，校正（列表为空时直接置 0，避免 coerceIn 空区间抛异常）
+            val idx = if (filtered.isEmpty()) 0
+            else getActiveBackgroundIndex(context).coerceIn(0, filtered.size - 1)
             setActiveBackgroundIndex(context, idx)
         }
         cachedBackgroundPaths = filtered
@@ -507,10 +510,13 @@ object FeatureSettingsRepository {
             .putString(KEY_CUSTOM_BACKGROUND_LIST, gson.toJson(list))
             .apply()
         invalidateBackgroundCache()
-        // 校正索引
+        // 校正索引（列表为空时直接置 0，避免 coerceIn 空区间抛异常）
+        if (list.isEmpty()) {
+            setActiveBackgroundIndex(context, 0)
+            return
+        }
         val prevIdx = getActiveBackgroundIndex(context)
         val newIdx = when {
-            list.isEmpty() -> -1
             removedIdx < prevIdx -> prevIdx - 1
             removedIdx == prevIdx -> prevIdx.coerceAtMost(list.size - 1)
             else -> prevIdx
@@ -644,4 +650,136 @@ object FeatureSettingsRepository {
      */
     const val DEFAULT_NOTIFICATION_AD_KEYWORDS: String =
         "广告,推广,限时,秒杀,优惠券,红包,抽奖,领取,福利,免费,补贴,拼团,砍价,赚佣金,邀请好友,边玩边赚,首单立减,新人专享,今日特惠,签到领,推广入驻,送大礼,提现,up to,广告打开,新品首发,马上抢,零门槛"
+
+    // ---------------- 弱网模拟 ----------------
+    private const val KEY_WEAK_NET_ENABLED = "weak_net_enabled"
+    private const val KEY_WEAK_NET_TARGET_PACKAGE = "weak_net_target_package"
+    private const val KEY_WEAK_NET_LATENCY_MS = "weak_net_latency_ms"
+    private const val KEY_WEAK_NET_JITTER_MS = "weak_net_jitter_ms"
+    private const val KEY_WEAK_NET_LOSS_PERCENT = "weak_net_loss_percent"
+    private const val KEY_WEAK_NET_DOWN_KBPS = "weak_net_down_kbps"
+    private const val KEY_WEAK_NET_UP_KBPS = "weak_net_up_kbps"
+    /** 旧版弱网音量键布尔字段，仅用于向 [KEY_VOLUME_KEY_ACTION] 迁移回退 */
+    private const val KEY_WEAK_NET_VOLUME_KEY = "weak_net_volume_key"
+    private const val KEY_VOLUME_KEY_ACTION = "volume_key_action"
+
+    const val WEAK_NET_LATENCY_MAX_MS = 5000
+    const val WEAK_NET_JITTER_MAX_MS = 1000
+    const val WEAK_NET_LOSS_MAX_PERCENT = 100
+    const val WEAK_NET_LIMIT_MAX_KBPS = 100000
+
+    @Volatile private var cachedWeakNetEnabled: Boolean? = null
+    @Volatile private var cachedWeakNetTargetPackage: String? = null
+    @Volatile private var cachedWeakNetParams: WeakNetworkParams? = null
+    @Volatile private var cachedVolumeKeyAction: VolumeKeyAction? = null
+
+    fun isWeakNetEnabled(context: Context): Boolean {
+        cachedWeakNetEnabled?.let { return it }
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_WEAK_NET_ENABLED, false)
+            .also { cachedWeakNetEnabled = it }
+    }
+
+    fun setWeakNetEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_WEAK_NET_ENABLED, enabled)
+            .apply()
+        cachedWeakNetEnabled = enabled
+    }
+
+    fun getWeakNetTargetPackage(context: Context): String? {
+        cachedWeakNetTargetPackage?.let { return it }
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_WEAK_NET_TARGET_PACKAGE, null)
+            .also { cachedWeakNetTargetPackage = it }
+    }
+
+    fun setWeakNetTargetPackage(context: Context, packageName: String?) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_WEAK_NET_TARGET_PACKAGE, packageName)
+            .apply()
+        cachedWeakNetTargetPackage = packageName
+    }
+
+    fun getWeakNetworkParams(context: Context): WeakNetworkParams {
+        cachedWeakNetParams?.let { return it }
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val params = WeakNetworkParams(
+            latencyMs = prefs.getInt(KEY_WEAK_NET_LATENCY_MS, 0),
+            jitterMs = prefs.getInt(KEY_WEAK_NET_JITTER_MS, 0),
+            lossPercent = prefs.getInt(KEY_WEAK_NET_LOSS_PERCENT, 0),
+            downKbps = prefs.getInt(KEY_WEAK_NET_DOWN_KBPS, 0),
+            upKbps = prefs.getInt(KEY_WEAK_NET_UP_KBPS, 0)
+        )
+        cachedWeakNetParams = params
+        return params
+    }
+
+    fun setWeakNetworkParams(context: Context, params: WeakNetworkParams) {
+        // 钳制到合法范围，避免非法参数注入
+        val safe = WeakNetworkParams(
+            latencyMs = params.latencyMs.coerceIn(0, WEAK_NET_LATENCY_MAX_MS),
+            jitterMs = params.jitterMs.coerceIn(0, WEAK_NET_JITTER_MAX_MS),
+            lossPercent = params.lossPercent.coerceIn(0, WEAK_NET_LOSS_MAX_PERCENT),
+            downKbps = params.downKbps.coerceIn(0, WEAK_NET_LIMIT_MAX_KBPS),
+            upKbps = params.upKbps.coerceIn(0, WEAK_NET_LIMIT_MAX_KBPS)
+        )
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putInt(KEY_WEAK_NET_LATENCY_MS, safe.latencyMs)
+            .putInt(KEY_WEAK_NET_JITTER_MS, safe.jitterMs)
+            .putInt(KEY_WEAK_NET_LOSS_PERCENT, safe.lossPercent)
+            .putInt(KEY_WEAK_NET_DOWN_KBPS, safe.downKbps)
+            .putInt(KEY_WEAK_NET_UP_KBPS, safe.upKbps)
+            .apply()
+        cachedWeakNetParams = safe
+    }
+
+    /**
+     * 当前"音量键快捷功能"动作。首次读取时若只有旧版 `weak_net_volume_key`
+     * 布尔字段，则迁移到新版枚举并写回（默认为 [VolumeKeyAction.NONE]）。
+     */
+    fun getVolumeKeyAction(context: Context): VolumeKeyAction {
+        cachedVolumeKeyAction?.let { return it }
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_VOLUME_KEY_ACTION, null)
+        val action = if (raw == null) {
+            val legacyEnabled = prefs.getBoolean(KEY_WEAK_NET_VOLUME_KEY, false)
+            val migrated = if (legacyEnabled) VolumeKeyAction.WEAK_NET else VolumeKeyAction.NONE
+            prefs.edit().putString(KEY_VOLUME_KEY_ACTION, migrated.name).apply()
+            migrated
+        } else {
+            volumeKeyActionSafe(raw)
+        }
+        cachedVolumeKeyAction = action
+        return action
+    }
+
+    fun setVolumeKeyAction(context: Context, action: VolumeKeyAction) {
+        val safe = if (action == null) VolumeKeyAction.NONE else action
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_VOLUME_KEY_ACTION, safe.name)
+            .apply()
+        cachedVolumeKeyAction = safe
+    }
+
+    /** 弱网音量键开关（派生自 [getVolumeKeyAction]）。 */
+    fun isWeakNetVolumeKeyEnabled(context: Context): Boolean =
+        getVolumeKeyAction(context) == VolumeKeyAction.WEAK_NET
+
+    fun setWeakNetVolumeKeyEnabled(context: Context, enabled: Boolean) {
+        setVolumeKeyAction(context, if (enabled) VolumeKeyAction.WEAK_NET else VolumeKeyAction.NONE)
+    }
+
+    /** 将音量键快捷功能恢复为系统原生音量行为。 */
+    fun clearVolumeKeyAction(context: Context) {
+        setVolumeKeyAction(context, VolumeKeyAction.NONE)
+    }
+
+    private fun volumeKeyActionSafe(raw: String): VolumeKeyAction {
+        return runCatching { VolumeKeyAction.valueOf(raw) }.getOrDefault(VolumeKeyAction.NONE)
+    }
 }

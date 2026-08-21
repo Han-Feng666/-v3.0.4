@@ -124,12 +124,13 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
   - 涉及版本展示或对外标识的位置，如 `build.gradle.kts`、首页版本文案、规则源请求 `User-Agent`，需要保持一致。
 
 [本地构建依赖 Android SDK]
-- Date: 2026-06-01
-- Context: Agent 在执行“检查并修复优化 app 里的所有功能”时发现
+- Date: 2026-08-19
+- Context: Agent 在执行“构建验证性能模块集成”时发现并更新
 - Category: 环境配置
 - Instructions:
   - 本项目执行 `./gradlew :app:assembleDebug` 依赖本机 Android SDK，可通过 `ANDROID_HOME` 或项目根目录 `local.properties` 中的 `sdk.dir` 指定。
-  - 当前工作区若缺少 Android SDK 路径，Gradle 会直接在依赖解析前失败，后续代码修复需要先补齐 SDK 环境再做完整编译验证。
+  - 工作区缺 `gradle-wrapper.jar` 且本地无 JDK/gradle/SDK 时，需自行准备：安装 `openjdk-17-jdk-headless`，下载 gradle-8.8 发行版到 `/opt/toolset`，下载 Android cmdline-tools 到 `/opt/android-sdk` 并设 `sdk.dir=/opt/android-sdk`，通过 `sdkmanager` 安装 `platforms;android-36` 与 `build-tools;36.1.0` 并 `yes | sdkmanager --licenses` 接受许可。
+  - 使用系统 gradle 而非 wrapper 时，先设 `GRADLE_USER_HOME`（如 `/opt/gradle-home`）避免 native services 初始化失败；内存受限环境用 `-Xmx1536m -XX:MaxMetaspaceSize=512m --no-daemon` 防止 OOM；首次构建需联网解析 AGP 8.5.0 依赖。
 
 [小说专项观测链路]
 - Date: 2026-04-24
@@ -926,3 +927,44 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
     false 时提示"重启后失效"。
   - 目标目录：/system/etc/security/cacerts 主路径（旧设备）；/apex/com.android.conscrypt/cacerts
     为 Android 14+ conscrypt 引擎实际加载点，但 APEX 不可写，仅可用 bind mount + nsenter。
+
+[性能模块集成约定]
+- Date: 2026-08-19
+- Context: Agent 在完成 KSU 性能模块（SCENE 调度 + AppOpt 线程优化）集成时发现
+- Category: 工作流协作
+- Instructions:
+  - 性能调优入口在设置页 `btnPerformanceTuner`，对应 `PerformanceTunerActivity`；根权限经 `SuSession.getInstance()` 的 open/execute/isSessionOpen 走 Shizuku root 激活。
+  - SCENE 支持 `standalone`（独立模式直接跑 `scene_daemon.sh`，按 `ro.board.platform` 前缀 `mt*/MT*` 判断天玑、其余走 QCOM 分支）与 `scene_dep`（兼容模式，注入 `config8gen3/*` 到 `/data/data/com.omarea.vtools/files`，需已装 Scene 工具箱）双模式，UI 用 RadioGroup 切换。
+  - 部署产物统一放 `/data/adb/HanFengPerf`，子目录 `scene/`、`appopt/`，日志 `scene.log`/`appopt.log`；模块文件从 app 私有目录 `filesDir/perf_staging` 经 `PerfTunerManager.deployAssets()` 中转复制。
+  - AppOpt 仅打包 arm64-v8a 二进制（APK 体积考虑），其他 ABI 跳过线程绑定；`cpu_control.sh` 使用 `function()` 语法（mksh 风格，Android `/system/bin/sh` 为 mksh 可接受，本地 dash 语法检查会误报）。
+  - 默认内置精简 AppOpt 规则模板（约 50 行），不带完整 289KB `applist.prop` 进 APK；UI 保存规则后自动重启对应守护。
+  - 性能调优 UI 采用全屏编辑器而非小对话框：`SceneParamsEditorActivity`（结构化表单分项输入 + 校验 + 恢复默认，SCENE 参数/频率/温度墙一体化编辑）与 `AppOptRulesEditorActivity`（大编辑区 + 实时有效规则统计 + 插入模板 + 恢复默认）；主界面另有"频率/温度墙"与"恢复出厂默认"入口，两个编辑页均需在 AndroidManifest 注册。
+  - 频率/温度墙独立持久化：Repository 新增 `scene_fmax_cap`（默认 auto）与 `scene_thermal`（默认 49500）键；`PerfTunerManager.writeSceneDaemon` 生成守护脚本时独立键优先于自定义参数文本 `fmax_cap`/`thermal_guard`，`restoreDefaultSceneConfig/restoreDefaultAppOptRules` 一键回出厂默认。
+  - Shizuku 官方权限名冲突修复：`shizuku-fork/manager/src/main/AndroidManifest.xml` 不能声明 `<permission android:name="moe.shizuku.manager.permission.API_V23">`（会导致官方 Shizuku APK 安装报 `INSTALL_FAILED_DUPLICATE_PERMISSION`），只保留 `<uses-permission>`；官方权限名的权威定义交给官方 Shizuku APP，未装官方时 fork 走 `com.HanFeng.permission.shizuku.API_V23`，server 端 `ServerConstants.isClientPermissionRequested` 仍同时识别官方权限串。
+
+[设备标识与进程监控修复约定]
+- Date: 2026-08-19
+- Context: Agent 完成 8 项用户问题修复（Root 区、IMEI 双卡槽、放行实时生效、拦截标志、广告拦截增强、进程监控、背景图卡顿/覆盖、免广告领奖励）
+- Category: 故障排查
+- Instructions:
+  - Root 区修复：`DeviceIdModifier.runRootShell` 入口统一在 execute 前 `if (!session.isSessionOpen()) session.open(timeoutSeconds = 30)`，一处覆盖 backup/restore/read/write 所有路径；`SuSession` 单例在 `app/src/main/java/com/HanFeng/adblocker/shizuku/SuSession.kt`。
+  - IMEI 双卡槽：`writeImeiDual(imei1, imei2)` 用 `IMEI_WRITE_PROPS` 里已含的 IMEI2 专属键（gsm.imei2/ril.imei2/persist.sys.imei2）；UI 层 `SettingsActivity` 的 `showModifyImeiDialog` 双输入框 + `executeImeiChange(imei1, imei2)`；IMEI2 留空则回退 `writeImei`。
+  - 放行实时生效：公开 `RuleRepository.clearWhitelistDomainCache()`，`WhitelistActivity.scheduleVpnReload()`（delay 350ms + `NetworkKernel.reloadIfRunning`）在延迟前先清缓存；`cachedWhitelistHits` 上限 500_000。
+  - 进程监控：`RunningAppsActivity` 用 `ProcessMonitor.getInstance` 的 STARTED 生命周期 + `processFlow`/`sampleError` 采集；`ProcessMonitor.isBackingShellAvailable()`（companion，静态判断 Shizuku pingBinder+checkSelfPermission 或 SuSession open）供 UI 判断是否显示授权引导按钮。
+  - `RunningAppsActivity` 是 AppCompatActivity（不是 BaseActivity），Shizuku 授权结果要在 `onRequestPermissionsResult`/`onActivityResult`（requestCode=4096，来自 `ShizukuRepository.REQUEST_CODE`）里 `refreshShellStatus()` 重启采样并隐藏按钮。
+  - 背景图：`CustomVisuals.decodeSampledDrawable(input, maxDimension=1920)` 先 inJustDecodeBounds 测尺寸再按 2 倍 inSampleSize 降采样，避免大图整张解码卡顿；布局里背景 ImageView 用 FrameLayout 包裹原根布局，id 统一 `ivBackground`。
+  - 免广告领奖励：`SettingsActivity.switchAdFreeReward` 开关切换需同步触发 `NetworkKernel.reloadIfRunning(this)` 才即时生效；`AdBlockVpnService.resolveAdFreeRewardProtection`（约 line 1849-1923）负责放行奖励验证域名。
+  - TextView 设置粗体用 `setTypeface(Typeface.DEFAULT, Typeface.BOLD)`，Kotlin 里 `textStyle` 不是属性会编译失败。
+  - 该环境编译命令（PATH 无 gradle）：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ANDROID_HOME=/opt/android-sdk GRADLE_USER_HOME=/opt/gradle-home /opt/toolset/gradle-8.8/bin/gradle :app:assembleDebug -x lint --no-daemon -Dorg.gradle.jvmargs="-Xmx1536m -XX:MaxMetaspaceSize=512m"`；gradle 发行版在 `/opt/toolset/gradle-8.8`。
+
+[性能调优与线程优化重设计]
+- Date: 2026-08-19
+- Context: 用户要求性能调优和线程优化分离，并重做 UI
+- Category: 工作流协作
+- Instructions:
+  - 设置页「性能调优（调度/线程优化）」拆为两个独立按钮：「性能调优（调度参数）」和「线程优化（APP 绑定）」。
+  - 性能调优新增 CPU/GPU 频率监控面板，通过 SuSession 读取 `/sys/devices/system/cpu/cpu*/cpufreq/` 和 `/sys/class/kgsl/kgsl-3d0/gpuclk`，显示每核心实时频率 + 温度，可设置最大频率。
+  - 温度墙显示改为 °C 格式（49.5 而非 49500），输入自动转换 *1000。
+  - 线程优化新建 AppOptAppsActivity，读取所有第三方 APP，列表显示，点进可设置 CPU 亲和性（小核/大核/全部/自定义），规则保存到 PerformanceTunerRepository 的 appopt_rule_text。
+  - Shizuku 权限管理按钮改为直接调用 `ShizukuRepository.requestPermission()` 触发系统授权，不再打开自定义管理页面。ShizukuPermissionManageActivity 保留但不从设置页跳转。
+  - 构建 shell 命令时避免在 Kotlin 字符串中使用 `\$` 转义，改用 `${'$'}` 变量 D 模式，确保 Kotlin 1.9 兼容。

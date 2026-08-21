@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Liquid Glass compact panel：深色玻璃体 + 双层边缘反光 + 底部轻暗部 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:centerColor="#5C1A1A2E"
+                android:endColor="#4A1A1A2E"
+                android:startColor="#721A1A2E" />
+            <corners android:radius="16dp" />
+        </shape>
+    </item>
+    <item android:left="2dp" android:right="2dp" android:top="10dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:centerColor="@android:color/transparent"
+                android:endColor="#16000000"
+                android:startColor="@android:color/transparent" />
+            <corners android:radius="16dp" />
+        </shape>
+    </item>
+    <item android:bottom="1dp" android:left="1dp" android:right="1dp" android:top="1dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="15dp" />
+            <stroke
+                android:width="1dp"
+                android:color="#52FFFFFF" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="16dp" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/hf_glass_stroke" />
+        </shape>
+    </item>
+</layer-list>

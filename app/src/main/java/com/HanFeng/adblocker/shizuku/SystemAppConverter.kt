@@ -65,8 +65,14 @@ class SystemAppConverter {
 
         /** /system 是否可写。/system 是 read-only squashfs 时返 false。 */
         fun isSystemWritable(): Boolean {
+            // 直接 test 可写性，避免 mount 表匹配不到 /system 独立项时误判（A/B 设备 /system 常与 / 合并）
+            val direct = SuSession.getInstance()
+                .execute("test -w /system && echo WRITABLE || echo READONLY")
+                .output
+            if (direct.contains("WRITABLE")) return true
+            if (direct.contains("READONLY")) return false
+            // 退化 1：无 su 输出时看 mount 表
             val out = SuSession.getInstance().execute("mount | grep ' /system '").output
-            // Android 8+ A/B 设备 /system 不一定有独立 mount 项, 有时是 / 覆盖
             val ro = out.contains(" ro,", ignoreCase = true) ||
                 out.contains(" ro ", ignoreCase = true) ||
                 out.contains(" ro\n", ignoreCase = true)

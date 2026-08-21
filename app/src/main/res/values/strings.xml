@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">寒枫</string>
+    <string name="weak_net_volume_key_accessibility_desc">弱网模式快捷开关：按下音量键可快速开启/关闭弱网模拟，避免调高调低音量。</string>
+    <string name="auto_combo_accessibility_desc">自动连招：录制并回放触摸操作，支持音量键快速开关与手势注入。</string>
 </resources>

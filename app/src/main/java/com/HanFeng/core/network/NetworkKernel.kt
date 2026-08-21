@@ -62,4 +62,11 @@ object NetworkKernel {
         if (!isRunning()) return
         reload(context)
     }
+
+    fun flushCachesIfRunning(context: Context) {
+        if (!isRunning()) return
+        context.startService(
+            Intent(context, AdBlockVpnService::class.java).setAction(AdBlockVpnService.ACTION_FLUSH_CACHES)
+        )
+    }
 }

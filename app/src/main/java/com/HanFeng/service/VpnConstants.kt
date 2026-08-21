@@ -4,7 +4,7 @@ object VpnConstants {
     const val LOCAL_DNS_V4 = "10.99.0.2"
     const val LOCAL_DNS_V6 = "fd66:66::2"
     const val STALE_CACHE_GRACE_MILLIS = 60_000L
-    const val DNS_SERVER_CACHE_TTL_MILLIS = 15_000L
+    const val DNS_SERVER_CACHE_TTL_MILLIS = 30_000L
     const val ROUTE_CACHE_PRUNE_INTERVAL_MILLIS = 60_000L
 
     const val DNS_RESPONSE_CACHE_MAX_SIZE = 4096

@@ -60,7 +60,14 @@ object ShizukuRepository {
 
     fun canAttemptUserService(context: Context): Boolean {
         val status = readBaseStatus(context)
+        // 安装 + binder 存活是可用前提，但 isShizukuEnabled 已不再依赖 binderAlive
+        // 以便在用户已授权但 Shizuku 进程未启动时能顺利进入后续的 queryShizukuReadyState 详细引导
         return status.installed && status.binderAlive
+    }
+
+    /** 仅检查 Shizuku 是否已安装（不依赖 binder 存活状态） */
+    fun isShizukuInstalledCheck(context: Context): Boolean {
+        return readBaseStatus(context).installed
     }
 
     fun requestPermission(): Boolean {

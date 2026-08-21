@@ -1,0 +1,330 @@
+[
+  {
+    "friendly": "闲鱼",
+    "packages": ["com.taobao.idlefish"],
+    "cpuset": {
+      "comm": {
+        "7": [],
+        "2-7": ["RenderThread", "1.ui", "1.raster", "taobao.idlefish"]
+      },
+      "other": "2-6"
+    }
+  },
+{
+    "friendly": "视频类",
+    "packages": [
+    "com.ss.android.ugc.aweme.lite", 
+    "com.ss.android.ugc.aweme", 
+    "com.smile.gifmaker", 
+    "tv.danmaku.bili",
+    "com.yishu.ylxsp",
+    "com.phoenix.read",
+    "com.kuaishou.nebula",
+    "com.tencent.qqlive"
+    ],
+    "cpuset": {
+      "comm": {
+        "0-4": [".ugc.aweme.lite", "ugc.aweme", ".smile.gifmaker", "kuaishou.nebula", "tv.danmaku.bili", "com.yishu.ylxsp", "om.phoenix.read",".tencent.qqlive"],
+        "2-4": ["RenderThread","HeapTaskDaemon"]
+      },
+      "other": "0-4"
+    }
+  },
+{
+    "friendly": "op相机",
+    "packages": ["com.oplus.camera"],
+    "cpuset": {
+      "comm": {
+        "7": ["om.oplus.camera"],
+        "2-4": ["RenderThread", "preview_rtb"]
+      },
+      "other": "2-7"
+    }
+  },
+  {
+    "friendly": "优先大核",
+    "packages": [
+    "com.tencent.mobileqq",
+      "com.tencent.qqlive", "com.taobao.idlefish",
+      "com.taobao.taobao", "com.jingdong.app.mall",
+      "com.tencent.news", "com.sina.weibo",
+      "com.netease.cloudmusic", "com.miui.player",
+      "com.tencent.mm",
+      "com.miui.notes",
+      "com.android.launcher",
+      "com.sankuai.meituan",
+      "com.android.vending"
+    ],
+"app_cpuset": {
+  "main": "7",
+  "render": "2-4",
+  "other": "2-6"
+}
+  },
+  {
+    "friendly": "鸣潮",
+    "packages": ["com.kurogame.mingchao", "com.kurogame.wutheringwaves.global"],
+    "cpuset": {
+      "rr": ["GameThread", "RenderThread", "RHIThread"],
+      "ni": ["GameThread", "RenderThread", "RHIThread"],
+      "main_thread": "2-6",
+      "trashy": ["Pool", "TAsync"],
+      "comm": {
+        "7": ["GameThread"],
+        "2-7": ["FChunk"],
+        "2-4": ["RenderThread", "RHIThread"]
+      },
+      "other": "2-6"
+    }
+  },
+  {
+    "friendly": "原神",
+    "packages": [
+      "com.miHoYo.Yuanshen",
+      "com.miHoYo.ys.mi",
+      "com.miHoYo.ys.bilibili",
+      "com.miHoYo.GenshinImpact"
+    ],
+    "cpuset": {
+      "rr": ["UnityMain", "UnityGfx", "UnityMultiRende"],
+      "ni": ["UnityMain", "UnityGfx", "UnityMultiRende"],
+      "unity_main": "7",
+      "heavy_thread": "UnityGfx",
+      "heavy_cores": "2-4",
+      "comm": {
+        "0-7": ["IL2CPP"],
+        "2-4": ["UnityChoreograp", "UnityMultiRende"],
+        "2-6": ["NativeThread", "Worker Thread", "FMOD", "UnityPreload", "AsyncReadManage"]
+      },
+      "other": "2-6"
+    }
+  },
+  {
+    "friendly": "星穹铁道",
+    "packages": ["com.miHoYo.hkrpg", "com.miHoYo.hkrpg.bilibili", "com.HoYoverse.hkrpgoversea"],
+    "cpuset": {
+      "rr": ["UnityMain", "UnityGfx"],
+      "ni": ["UnityMain", "UnityGfx"],
+      "comm": {
+        "7": ["UnityMain"],
+        "2-4": ["UnityGfx"],
+        "2-6": ["NativeThread", "Job.Worker"]
+      },
+      "other": "2-6"
+    }
+  },
+
+  {
+    "friendly": "王者荣耀",
+    "packages": ["com.tencent.tmgp.sgame", "com.tencent.tmgp.sgamece"],
+    "cpuset": {
+      "ni": ["UnityMain", "HeavyThread", "UnityGfx"],
+      "rr": ["UnityMain", "HeavyThread", "UnityGfx"],
+      "heavy_thread": "UnityGfx;Thread-",
+      "heavy_cores": "2-4",
+      "comm": {
+        "7": ["UnityMain"],
+        "2-7": ["IL2CPP", "btm_"],
+        "2-4": ["CoreThread", "Apollo-", "NativeThread", "UnityChoreo", "Worker Thread", "Job.worker"]
+      },
+      "other": "2-6"
+    }
+  },
+  {
+    "friendly": "LOLM",
+    "packages": ["com.tencent.lolm"],
+    "cpuset": {
+      "ni": ["UnityMain", "HeavyThread", "UnityGfx"],
+      "rr": ["UnityMain", "HeavyThread", "UnityGfx"],
+      "heavy_thread": "UnityGfx;Thread-",
+      "heavy_cores": "2-4",
+      "comm": {
+        "7": ["UnityMain"],
+        "2-7": ["IL2CPP", "btm_"],
+        "2-4": ["UnityChoreo"]
+      },
+      "other": "2-6"
+    }
+  },
+  {
+    "friendly": "和平精英",
+    "packages": ["com.tencent.tmgp.pubgmhd", "com.tencent.tmgp.pubgmhdce"],
+    "cpuset": {
+      "ni": ["RHIThread", "HeavyThread", "RenderThread"],
+      "rr": ["RHIThread", "HeavyThread", "RenderThread"],
+      "heavy_thread": "Thread-",
+      "heavy_cores": "7",
+      "comm": {
+        "2-6": ["TaskGraph"],
+        "2-4": ["RenderThread", "RHIThread", "FAsyncLoading", "MainThread", "NativeThread"]
+      },
+      "other": "2-6"
+    }
+  },
+{
+    "friendly": "三角洲行动",
+    "packages": ["com.tencent.tmgp.dfm"],
+    "cpuset": {
+      "ni": ["RHIThread", "HeavyThread", "RenderThread"],
+      "rr": ["RHIThread", "HeavyThread", "RenderThread"],
+      "heavy_thread": "RenderThread",
+      "heavy_cores": "7",
+      "comm": {
+        "2-4": ["GameThread", "RHIThread", "TaskGraph","Thread-", "MainThread", "NativeThread"]
+      },
+      "other": "2-6"
+    }
+  },
+{
+    "friendly": "无畏契约",
+    "packages": ["com.tencent.tmgp.codev"],
+    "cpuset": {
+      "ni": ["GameThread", "HeavyThread", "RenderThread"],
+      "rr": ["RHIThread", "HeavyThread", "RenderThread"],
+      "heavy_thread": "RenderThread",
+      "heavy_cores": "2-4",
+      "comm": {
+        "7": ["GameThread"],
+        "2-4": ["RenderThread", "TaskGraph", "Thread-"],
+        "2-6": ["FAsyncLoading", "MainThread", "NativeThread"]
+      },
+      "other": "2-6"
+    }
+  },
+  {
+    "friendly": "QQ飞车",
+    "packages": ["com.tencent.tmgp.speedmobile", "com.garena.game.fctw"],
+    "cpuset": {
+      "ni": ["UnityMain", "HeavyThread"],
+      "rr": ["UnityMain", "HeavyThread"],
+      "unity_main": "7",
+      "heavy_thread": "UnityGfx;Thread-",
+      "heavy_cores": "2-4",
+      "comm": {
+        "2-4": ["Job.Worker", "UnityGfxRender"],
+        "2-6": ["UnityChoreograp", "NativeThread", "mhp.speedmobile", "AudioTrack", "GThreadManager", "binder."]
+      },
+      "other": "2-6"
+    }
+  },
+  {
+    "friendly": "PUBG(UE4)",
+    "packages": ["com.pubg.imobile", "com.pubg.krmobile", "com.tencent.ig", "com.rekoo.pubgm"],
+    "cpuset": {
+      "ni": ["MainThread", "HeavyThread", "RenderThread", "RHIThread"],
+      "rr": ["MainThread", "HeavyThread", "RenderThread", "RHIThread"],
+      "heavy_thread": "UEGameThread;Thread-",
+      "heavy_cores": "7",
+      "comm": {
+        "7": ["UEGameThread"],
+        "2-4": ["RenderThread", "RHIThread"],
+        "2-6": ["MainThread", "TaskGraph", "NativeThread"]
+      },
+      "other": "2-6"
+    }
+  },
+  {
+    "friendly": "COD Mobile",
+    "packages": ["com.activision.callofduty.warzone"],
+    "cpuset": {
+      "heavy_cores": "7",
+      "heavy_thread": "Main",
+      "comm": {
+        "2-4": ["Backend", "Worker"]
+      },
+      "other": "2-6"
+    }
+  },
+  {
+    "friendly": "Fortnite",
+    "packages": ["com.epicgames.fortnite"],
+    "cpuset": {
+      "comm": {
+        "7": ["GameThread"],
+        "2-4": ["RHIThread"],
+        "2-6": ["AudioMi", "Foreground", "Background"]
+      },
+      "other": "2-6"
+    }
+  },
+  {
+    "friendly": "永劫无间",
+    "packages": ["com.netease.l22", "com.netease.l22.mi"],
+    "cpuset": {
+      "ni": ["HeavyThread"],
+      "rr": ["HeavyThread"],
+      "unity_main": "7",
+      "heavy_thread": "UnityGfx;Thread-",
+      "heavy_cores": "2-4",
+      "other": "2-6"
+    }
+  },
+  {
+    "friendly": "高能英雄",
+    "packages": ["com.tencent.tmgp.gnyx"],
+    "cpuset": {
+      "ni": ["HeavyThread", "RHIThread", "Render"],
+      "rr": ["HeavyThread", "RHIThread", "Render"],
+      "heavy_thread": "Thread-",
+      "heavy_cores": "7",
+      "comm": {
+        "2-4":["Render", "RHIThread"]
+      },
+      "other": "2-6"
+    }
+  },
+  {
+    "friendly": "卡拉彼丘",
+    "packages": ["com.idreamsky.klbqm"],
+    "cpuset": {
+      "ni": ["HeavyThread", "Render"],
+      "rr": ["HeavyThread", "Render"],
+      "heavy_thread": "Thread-",
+      "heavy_cores": "7",
+      "comm": {
+        "2-4":["Render"]
+      },
+      "other": "2-6"
+    }
+  },
+  {
+    "friendly": "学园偶像大师",
+    "packages": ["com.bandainamcoent.idolmaster_gakuen"],
+    "cpuset": {
+      "ni": ["UnityMain", "HeavyThread"],
+      "rr": ["UnityMain", "HeavyThread"],
+      "unity_main": "7",
+      "heavy_thread": "UnityGfx;Thread-",
+      "heavy_cores": "2-4",
+      "other": "2-6"
+    }
+  },
+  {
+    "friendly": "音游",
+    "packages": [
+      "com.bilibili.star.bili", "jp.co.craftegg.band", "net.gamon.bdTW", "com.bushiroad.en.bangdreamgbp", "com.hermes.mk", "com.hermes.mk.bilibili", "com.sega.pjsekai", "com.hermes.mk.asia"
+    ],
+    "cpuset": {
+      "ni": ["UnityMain", "HeavyThread"],
+      "rr": ["UnityMain", "HeavyThread"],
+      "unity_main": "7",
+      "comm": {
+        "2-4": ["UnityGfx"]
+      },
+      "other": "2-6"
+    }
+  },
+  {
+    "friendly": "明日方舟：终末地",
+    "packages": ["com.hypergryph.endfield"],
+    "cpuset": {
+      "ni": ["UnityMain", "UnityGfx"],
+      "rr": ["UnityMain", "UnityGfx"],
+      "unity_main": "7",
+      "comm": {
+        "2-4": ["UnityGfx"]
+      },
+      "other": "2-6"
+    }
+  }
+]

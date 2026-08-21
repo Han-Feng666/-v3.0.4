@@ -1,23 +1,71 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Liquid Glass dialog：环境投影 + 可见玻璃体 + 双层边缘反光 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Drop shadow layer -->
+    <!-- Ambient drop shadow -->
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="@color/hf_shadow" />
-            <corners android:radius="22dp" />
+            <solid android:color="@color/hf_glass_shadow_dark" />
+            <corners android:radius="24dp" />
             <padding
+                android:bottom="0dp"
                 android:left="0dp"
-                android:top="2dp"
                 android:right="0dp"
-                android:bottom="0dp" />
+                android:top="3dp" />
         </shape>
     </item>
-    <!-- Solid dialog window -->
-    <item android:left="0dp" android:top="0dp" android:right="0dp" android:bottom="2dp">
+    <!-- 玻璃体填充：极淡白底渐变模拟高斯模糊效果 -->
+    <item
+        android:bottom="3dp"
+        android:left="0dp"
+        android:right="0dp"
+        android:top="0dp">
         <shape android:shape="rectangle">
-            <solid android:color="@color/hf_surface_elevated" />
-            <corners android:radius="20dp" />
-            <stroke android:width="0.5dp" android:color="@color/hf_border_subtle" />
+            <gradient
+                android:angle="270"
+                android:centerColor="#2EFFFFFF"
+                android:endColor="#20FFFFFF"
+                android:startColor="#42FFFFFF" />
+            <corners android:radius="22dp" />
+        </shape>
+    </item>
+    <!-- 底部投影 Y≈2 黑 4% -->
+    <item
+        android:bottom="3dp"
+        android:left="2dp"
+        android:right="2dp"
+        android:top="14dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:centerColor="@android:color/transparent"
+                android:endColor="@color/hf_glass_inner_shadow"
+                android:startColor="@android:color/transparent" />
+            <corners android:radius="22dp" />
+        </shape>
+    </item>
+    <item
+        android:bottom="4dp"
+        android:left="1dp"
+        android:right="1dp"
+        android:top="1dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="21dp" />
+            <stroke
+                android:width="1dp"
+                android:color="#4DFFFFFF" />
+        </shape>
+    </item>
+    <!-- 轮廓冷蓝 0.5dp / 6% -->
+    <item
+        android:bottom="3dp"
+        android:left="0dp"
+        android:right="0dp"
+        android:top="0dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="22dp" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/hf_glass_stroke" />
         </shape>
     </item>
 </layer-list>

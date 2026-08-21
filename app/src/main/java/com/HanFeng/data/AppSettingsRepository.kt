@@ -13,11 +13,14 @@ object AppSettingsRepository {
     @Volatile private var cachedHideBackground: Boolean? = null
 
     fun isShizukuEnabled(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_USE_SHIZUKU, false)
+        // Shizuku 增强不再依赖任何手动开关，也不依赖 binder 存活状态。
+        // 只要 Shizuku 已安装（用户已授权），即视为已启用。
+        // binder 是否存活留给后续 queryShizukuReadyState 详细引导处理。
+        return ShizukuRepository.isShizukuInstalledCheck(context)
     }
 
     fun setShizukuEnabled(context: Context, enabled: Boolean) {
+        // 保留 setter 兼容旧代码，但 isShizukuEnabled 已改为自动判定，此存储仅作存档
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_USE_SHIZUKU, enabled)

@@ -1,0 +1,286 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自动连招弹窗面板：矩形圆角液态玻璃（bg_panel 体系），代码叠加 blurBehindRadius(31+) -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_combo_panel"
+    android:minWidth="272dp"
+    android:orientation="vertical"
+    android:padding="14dp">
+
+    <!-- 标题栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="自动连招"
+                android:textColor="@color/hf_text_primary"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvComboStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="空闲"
+                android:textColor="@color/hf_text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btnPanelClose"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="@drawable/bg_combo_button"
+            android:backgroundTint="@null"
+            android:minWidth="0dp"
+            android:padding="0dp"
+            android:text="×"
+            android:textAllCaps="false"
+            android:textColor="@color/hf_text_primary"
+            android:textSize="16sp" />
+    </LinearLayout>
+
+    <!-- 脚本切换 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="脚本"
+            android:textColor="@color/hf_text_primary"
+            android:textSize="13sp" />
+
+        <ImageView
+            android:id="@+id/btnScriptPrev"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginStart="10dp"
+            android:contentDescription="上一个脚本"
+            android:padding="6dp"
+            android:src="@android:drawable/ic_media_previous" />
+
+        <TextView
+            android:id="@+id/tvComboScript"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:gravity="center"
+            android:maxLines="1"
+            android:text="未创建脚本"
+            android:textColor="@color/hf_text_primary"
+            android:textSize="13sp" />
+
+        <ImageView
+            android:id="@+id/btnScriptNext"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:contentDescription="下一个脚本"
+            android:padding="6dp"
+            android:src="@android:drawable/ic_media_play" />
+    </LinearLayout>
+
+    <!-- 播放模式 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="播放模式"
+            android:textColor="@color/hf_text_primary"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/btnPlayMode"
+            android:layout_width="wrap_content"
+            android:layout_height="30dp"
+            android:background="@drawable/bg_combo_button"
+            android:backgroundTint="@null"
+            android:minWidth="0dp"
+            android:paddingHorizontal="10dp"
+            android:text="单次"
+            android:textAllCaps="false"
+            android:textColor="@color/hf_text_primary"
+            android:textSize="12sp" />
+
+        <ImageView
+            android:id="@+id/btnLoopMinus"
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:layout_marginStart="8dp"
+            android:contentDescription="减少次数"
+            android:padding="6dp"
+            android:src="@android:drawable/ic_input_delete"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tvLoopCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="28dp"
+            android:gravity="center"
+            android:text="1"
+            android:textColor="@color/hf_text_primary"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
+        <ImageView
+            android:id="@+id/btnLoopPlus"
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:contentDescription="增加次数"
+            android:padding="6dp"
+            android:src="@android:drawable/ic_input_add"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- 整机变速 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="变 速"
+            android:textColor="@color/hf_text_primary"
+            android:textSize="13sp" />
+
+        <SeekBar
+            android:id="@+id/sbComboSpeed"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:layout_weight="1"
+            android:max="30"
+            android:progress="10" />
+
+        <TextView
+            android:id="@+id/tvComboSpeedVal"
+            android:layout_width="46dp"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:text="1.0x"
+            android:textColor="@color/hf_text_primary"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <!-- 动作按钮 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btnRecord"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_marginEnd="6dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_combo_button"
+            android:backgroundTint="@null"
+            android:text="开始录制"
+            android:textAllCaps="false"
+            android:textColor="@color/hf_text_primary"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/btnPlay"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="6dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_button_primary"
+            android:backgroundTint="@null"
+            android:text="回放"
+            android:textAllCaps="false"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <!-- 编辑 / 列表 / 总开关 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btnComboEdit"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_marginEnd="6dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_combo_button"
+            android:backgroundTint="@null"
+            android:text="编辑步骤"
+            android:textAllCaps="false"
+            android:textColor="@color/hf_text_primary"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btnComboList"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_marginStart="6dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_combo_button"
+            android:backgroundTint="@null"
+            android:text="脚本管理"
+            android:textAllCaps="false"
+            android:textColor="@color/hf_text_primary"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- 总开关 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="自动连招"
+            android:textColor="@color/hf_text_primary"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchComboMaster"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+    </LinearLayout>
+</LinearLayout>

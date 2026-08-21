@@ -25,11 +25,19 @@ public class ServerConstants {
     public static final String PERMISSION_LEGACY_OFFICIAL = "moe.shizuku.manager.permission.API_V23";
 
     /**
+     * 旧版官方 Shizuku SDK (dev.rikka.shizuku:api 13.x 以下) 客户端在 manifest 里声明的
+     * permission 串。https://github.com/RikkaApps/Shizuku 历史版本一直使用此串。
+     * 大量第三方 APP 即使升级到新版 SDK 也会在合并 manifest 时写这个旧串。
+     * fork 的 server 必须把它也认作合法客户端，否则这些 APP 永远收不到 binder。
+     */
+    public static final String PERMISSION_LEGACY_OFFICIAL_V1 = "moe.shizuku.privileged.api.permission.API_V23";
+
+    /**
      * 合法的客户端 permission 串集合 —— sendBinderToClient / getApplications / updateFlagsForUid
      * 全部用本集合做"客户端打白名单"的判定，而非单串比对。
      */
     public static final List<String> CLIENT_PERMISSIONS =
-            Collections.unmodifiableList(Arrays.asList(PERMISSION, PERMISSION_LEGACY_OFFICIAL));
+            Collections.unmodifiableList(Arrays.asList(PERMISSION, PERMISSION_LEGACY_OFFICIAL, PERMISSION_LEGACY_OFFICIAL_V1));
 
     /**
      * 判断给定 package 的 requestedPermissions 数组里是否包含任一合法客户端 permission 串。

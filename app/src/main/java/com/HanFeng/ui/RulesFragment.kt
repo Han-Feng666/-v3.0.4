@@ -1095,6 +1095,7 @@ class RulesFragment : Fragment(R.layout.fragment_rules) {
         val selectedSnapshot = selectedIds.toSet()
         val currentSelectionMode = selectionMode
         val query = searchQuery.lowercase()
+        binding.ruleSummary.text = if (rulesLoadedOnce) "刷新中…" else "加载中…"
         viewLifecycleOwner.lifecycleScope.launch {
             val state = runCatching {
                 withContext(Dispatchers.Default) {

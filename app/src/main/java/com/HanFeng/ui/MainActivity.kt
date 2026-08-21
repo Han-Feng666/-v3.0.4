@@ -92,6 +92,7 @@ class MainActivity : BaseActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        setTheme(R.style.Theme_HanFengAdBlock)
         super.onCreate(savedInstanceState)
         runCatching {
             (application as? com.HanFeng.HanFengApp)?.writeStartupLog("MainActivity.onCreate start")

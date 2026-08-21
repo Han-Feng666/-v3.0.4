@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 连招悬浮球：液态玻璃圆形小球 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="oval">
+            <gradient
+                android:angle="270"
+                android:centerColor="#33FFFFFF"
+                android:endColor="#22FFFFFF"
+                android:startColor="#48FFFFFF" />
+        </shape>
+    </item>
+    <item android:left="2dp" android:right="2dp" android:top="9dp">
+        <shape android:shape="oval">
+            <gradient
+                android:angle="270"
+                android:centerColor="@android:color/transparent"
+                android:endColor="@color/hf_glass_inner_shadow"
+                android:startColor="@android:color/transparent" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="oval">
+            <stroke
+                android:width="1dp"
+                android:color="@color/hf_glass_stroke" />
+        </shape>
+    </item>
+    <item android:bottom="1dp" android:left="1dp" android:right="1dp" android:top="1dp">
+        <shape android:shape="oval">
+            <stroke
+                android:width="1dp"
+                android:color="#52FFFFFF" />
+        </shape>
+    </item>
+</layer-list>

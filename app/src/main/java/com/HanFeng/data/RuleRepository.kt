@@ -523,7 +523,354 @@ object RuleRepository {
         "smaato",
         "tapjoy",
         "adcolony",
-        "ogury"
+        "ogury",
+        "splashad",
+        "splash_screen",
+        "openscreen",
+        "open_screen",
+        "startupscreen",
+        "startup_screen",
+        "launchscreen",
+        "launch_screen",
+        "feedad",
+        "feed_ad",
+        "feedadv",
+        "commentad",
+        "comment_ad",
+        "commentadv",
+        "commentsdk",
+        "communityad",
+        "community_ad",
+        "bbsad",
+        "bbs_ad",
+        "forumad",
+        "forum_ad",
+        "postad",
+        "post_ad",
+        "threadad",
+        "thread_ad",
+        "listad",
+        "list_ad",
+        "infeed",
+        "in_feed",
+        "native_feed",
+        "feed_native",
+        "ad_insert",
+        "insertad",
+        "insert_ad",
+        "ad_placement",
+        "placementad",
+        "ad_slot",
+        "slotad",
+        "ad_container",
+        "containerad",
+        "ad_holder",
+        "holderad",
+        "ad_frame",
+        "framead",
+        "ad_banner",
+        "bannerad",
+        "ad_float",
+        "floatad",
+        "ad_popup",
+        "popupad",
+        "ad_dialog",
+        "dialogad",
+        "ad_overlay",
+        "overlayad",
+        "ad_layer",
+        "layerad",
+        "ad_bottom",
+        "bottomad",
+        "ad_top",
+        "topad",
+        "ad_middle",
+        "middlead",
+        "ad_center",
+        "centerad",
+        "ad_sidebar",
+        "sidebarad",
+        // === 新增增强关键词 ===
+        "bidswitch",
+        "smartad",
+        "smartadserver",
+        "loopme",
+        "startapp",
+        "admost",
+        "hyprmx",
+        "fyber",
+        "chartboost",
+        "inmobi",
+        "adgeneration",
+        "nend",
+        "amoad",
+        "maio",
+        "fivead",
+        "supersonic",
+        "tapcore",
+        "adincube",
+        "adlime",
+        "adrevenue",
+        "adshm",
+        "beamad",
+        "btrace",
+        "gdtad",
+        "qqad",
+        "tencentad",
+        "tencentmind",
+        "heytapad",
+        "nearmead",
+        "mipush",
+        "gtpush",
+        "jpush",
+        "igexin",
+        "getui",
+        "xiaomiad",
+        "huaweiad",
+        "oppoad",
+        "vivoad",
+        "meizuad",
+        "baidustat",
+        "bcebox",
+        "mmstat",
+        "clickdsp",
+        "cpro",
+        "nsclick",
+        "posbaidu",
+        "cbco",
+        "colossus",
+        "hbopen",
+        "dtexchange",
+        "openwrap",
+        "aiclk",
+        "tpbid",
+        "anythink",
+        "maxads",
+        "audiencenetwork",
+        "adcolony",
+        "ogury",
+        "smaato",
+        "pubnative",
+        "sharethrough",
+        "revcontent",
+        "contentad",
+        "adk2",
+        "adpushup",
+        "adgainer",
+        "adblade",
+        "adbutler",
+        "adcash",
+        "adskeeper",
+        "adsterra",
+        "adx1",
+        "adxbid",
+        "adxtag",
+        "adxpremium",
+        "adxad",
+        "adxserve",
+        "adxexchange",
+        "adexchange",
+        "adxbidder",
+        "adxserver",
+        "adxadvert",
+        "adx_",
+        "pushad",
+        "notifyad",
+        "notificationad",
+        "pushnotify",
+        "pushnotification",
+        "adpush",
+        "pushadvert",
+        "pushbanner",
+        "push_",
+        "pushsdk",
+        "pushsdkad",
+        "instream",
+        "inarticle",
+        "incontent",
+        "contentad",
+        "contextad",
+        "contextual",
+        "programmatic",
+        "headerbidding",
+        "prebid",
+        "prebidjs",
+        "adstxt",
+        "sellersjson",
+        "supplychain",
+        "adsense",
+        "admanager",
+        "adunit",
+        "adslot",
+        "adbreak",
+        "adpod",
+        "adinsert",
+        "adplacement",
+        "adposition",
+        "adsize",
+        "adtype",
+        "adformat",
+        "adload",
+        "adcall",
+        "adfetch",
+        "adrequest",
+        "adresponse",
+        "adfill",
+        "admate",
+        "adrender",
+        "adcreative",
+        "adtemplate",
+        "adbatch",
+        "adcache",
+        "adpreload",
+        "adfetch",
+        "adrefresh",
+        "adrotate",
+        "adinterval",
+        "adfrequency",
+        "adcap",
+        "adlimit",
+        "adblock",
+        "adblocker",
+        "adblocking",
+        "ad_free",
+        "adfree",
+        "noads",
+        "removead",
+        "removeads",
+        "skipad",
+        "skipads",
+        "gromore",
+        "topon",
+        "beizi",
+        "yueyu",
+        "yueyue",
+        "wesdk",
+        "weishang",
+        "bksd",
+        "qad",
+        "yqs",
+        "admaster",
+        "adsage",
+        "adwo",
+        "mobads",
+        "trackview",
+        "tdmark",
+        "adgate",
+        "mtad",
+        "meituanad",
+        "elemead",
+        "koubei",
+        "pddad",
+        "vipad",
+        "suningad",
+        "weiboad",
+        "zhihuad",
+        "wb_ads",
+        "infeedad",
+        "contentad",
+        "promobanner",
+        "facebookad",
+        "twitterad",
+        "tiktokad",
+        "youtubead",
+        "ytpad",
+        "instoryad",
+        "snapad",
+        "redditad",
+        "linkedinad",
+        "pinterestad",
+        "video_ad",
+        "playerad",
+        "livestreamad",
+        "vidad",
+        "pausead",
+        "adpop",
+        "admodal",
+        "addialog",
+        "adtoast",
+        "adfloat",
+        "adlayer",
+        "admask",
+        "livead",
+        "anchorad",
+        "shopad",
+        "storead",
+        "hotad",
+        "guessad",
+        "recommendad",
+        "adrecommend",
+        "adfeed",
+        "adstream",
+        "nativebanner",
+        "nativefeed",
+        "adblock_detect",
+        "adguard",
+        "adaway",
+        "adclean",
+        "adwall",
+        "adshield",
+        "adglare",
+        "adplugg",
+        "adbutler",
+        "adroll",
+        "adx",
+        "adssp",
+        "adnetwork",
+        "adnw",
+        "adserver",
+        "adtech",
+        "adform",
+        "adcalls",
+        "adpartner",
+        "adagency",
+        "adbroker",
+        "adspace",
+        "adspot",
+        "adtag",
+        "adsdk",
+        "adapi",
+        "adendpoint",
+        "adbidding",
+        "adbid",
+        "adprice",
+        "adcpm",
+        "adimpression",
+        "adclicker",
+        "adconversion",
+        "adviewability",
+        "admeasurement",
+        "adverification",
+        "adtracking",
+        "adpixel",
+        "adtoken",
+        "adidentity",
+        "adprofile",
+        "adsegment",
+        "adaudience",
+        "adtargeting",
+        "adcampaign",
+        "adcreative",
+        "adbrand",
+        "advertiser",
+        "advertise",
+        "promoad",
+        "promotionad",
+        "promosdk",
+        "promosdkad",
+        "appdownload",
+        "appinstall",
+        "apppromo",
+        "gamepromo",
+        "giftpack",
+        "goldad",
+        "diamondad",
+        "vipad",
+        "memberad",
+        "chargead",
+        "paymentad",
+        "tradead",
+        "marketad"
     )
     private val weakAdKeywords = setOf(
         "ad",
@@ -830,6 +1177,13 @@ object RuleRepository {
         val rule = buildNormalizedBlockRule(context, domain, source)
         appendRulesToFile(context, listOf(rule))
         return rule
+    }
+
+    fun refreshCaches(context: Context) {
+        runCatching {
+            val rules = getRules(context)
+            rebuildCachesFromRules(context, rules)
+        }
     }
 
     fun addExceptionRule(context: Context, rawDomain: String): BlockRule? {
@@ -3114,32 +3468,29 @@ object RuleRepository {
         if (isWhitelistedDomain(normalized)) return false
         if (isBypassProtectionDomain(normalized)) return true
         if (hasMatchingRule(context, normalized)) return false
-        // 小说内容 API 域名不拦截
         if (VendorConfigData.novelContentApiDomains.contains(normalized) || VendorConfigData.novelContentApiDomains.any { normalized.endsWith(".$it") }) return false
-        // 游戏核心服务不拦截（确保游戏正常运行）
         if (isGameCoreDomain(normalized)) return false
-        // 社交 APP 核心服务不拦截（确保微信 QQ 正常）
         if (isSocialCoreDomain(normalized)) return false
         val normalizedVendor = normalizeVendorName(vendor)
         val lower = normalized.lowercase()
-        // 增强广告域名信号检测 - 扩大关键词范围
-        val hasAggressiveSignal = lower.contains("ad") || lower.contains("ads") || lower.contains("banner") || lower.contains("splash") || 
-            lower.contains("promo") || lower.contains("tracking") || lower.contains("log") || lower.contains("stat") || 
+        val hasAggressiveSignal = lower.contains("ad") || lower.contains("ads") || lower.contains("banner") || lower.contains("splash") ||
+            lower.contains("promo") || lower.contains("tracking") || lower.contains("log") || lower.contains("stat") ||
             lower.contains("analytics") || lower.contains("monitor") || lower.contains("track") || lower.contains("count") ||
             lower.contains("report") || lower.contains("feed") || lower.contains("stream") || lower.contains("api") ||
-            lower.contains("cdn") || lower.contains("dsp") || lower.contains("adx") || lower.contains("ssp")
-        // 增强小说 APP 广告识别 - 包含广告域名特征立即拦截
+            lower.contains("cdn") || lower.contains("dsp") || lower.contains("adx") || lower.contains("ssp") ||
+            lower.contains("rtb") || lower.contains("bid") || lower.contains("auction") || lower.contains("creative") ||
+            lower.contains("material") || lower.contains("impression") || lower.contains("reward") || lower.contains("offer") ||
+            lower.contains("mediation") || lower.contains("waterfall") || lower.contains("placement") || lower.contains("template")
         if (hasAggressiveSignal && looksLikeAdDomain(normalized)) return true
-        // 广告供应商域名一律拦截（针对小说 APP）
         if (VendorConfigData.novelAggressiveVendorNames.contains(normalizedVendor)) return true
-        // 包含 SDK、service、platform 等字样也拦截
-        val hasSdkSignal = lower.contains("sdk") || lower.contains("service") || lower.contains("platform") || 
+        val hasSdkSignal = lower.contains("sdk") || lower.contains("service") || lower.contains("platform") ||
             lower.contains("manager") || lower.contains("network") || lower.contains("server")
         if (hasSdkSignal && hasAggressiveSignal) return true
         if (isProtectedNovelAppDomain(normalized)) return false
         val matchesExactAggressiveDomain = buildDomainCandidates(normalized).any(VendorConfigData.novelAggressiveExactDomains::contains)
         if (matchesExactAggressiveDomain) return true
-        // 增强广告域名识别
+        if (normalizedVendor in VendorConfigData.highConfidenceAdSdkVendors) return true
+        if (looksLikeAdSdkInfraDomain(normalized, normalizedVendor)) return true
         return looksLikeAdDomain(normalized) && hasAggressiveNovelAdSignal(normalized)
     }
 
@@ -3704,7 +4055,7 @@ object RuleRepository {
                     refererDomain = sample.refererDomain
                 )
                 val isCommunityApp = isCommunityAppHint(sample.lastAppName)
-                score >= 6 || (isCommunityApp && score >= 4 && sample.count >= 2)
+                score >= 5 || (isCommunityApp && score >= 4 && sample.count >= 2)
             }
             .take(limit)
             .toList()
@@ -3875,7 +4226,7 @@ object RuleRepository {
             novelHits = if (isNovelAppHint(appName)) 1 else 0,
             count = sampleCount,
             appName = appName
-        ) >= 6
+        ) >= 5
     }
 
     fun isHighConfidenceSuspiciousDomain(
@@ -3994,13 +4345,20 @@ object RuleRepository {
         if (hasMatchingRulePlaceholder(normalized)) return true
         val normalizedVendor = normalizeVendorName(vendor)
         if (VendorConfigData.novelAggressiveVendorNames.contains(normalizedVendor)) return true
+        if (normalizedVendor in VendorConfigData.highConfidenceAdSdkVendors) return true
+        if (looksLikeAdSdkInfraDomain(normalized, normalizedVendor)) return true
         if (looksLikeAdDomain(normalized) && hasAggressiveNovelAdSignal(normalized)) return true
         val lower = normalized.lowercase()
         val strongNovelQuicSignals = listOf(
             "ad", "ads", "adx", "dsp", "ssp", "rtb", "bid", "bidding", "promo", "promotion",
             "splash", "reward", "excitation", "inspire", "offer", "offers", "preload", "launch",
             "startup", "tracking", "tracker", "analytics", "stat", "report", "monitor", "log",
-            "welfare", "task", "coin", "bonus", "benefit", "offerwall", "monetize", "monetization"
+            "welfare", "task", "coin", "bonus", "benefit", "offerwall", "monetize", "monetization",
+            "creative", "material", "impression", "playable", "endcard", "mediation", "waterfall",
+            "auction", "bidder", "placement", "template", "adnetwork", "adplatform", "admanager",
+            "appsflyer", "adjust", "kochava", "singular", "branch", "mintegral", "mobvista",
+            "applovin", "vungle", "ironsrc", "inmobi", "adcolony", "tapjoy", "chartboost",
+            "unityads", "topon", "tradplus", "adscope", "beizi", "sigmob", "fyber", "liftoff"
         )
         return strongNovelQuicSignals.any { signal -> keywordMatches(lower, lower.replace(alphanumericRegex, ""), signal) }
     }
@@ -4375,14 +4733,28 @@ object RuleRepository {
         if (normalizedLine.isBlank()) return null
         val isException = normalizedLine.startsWith("@@")
         val working = if (isException) normalizedLine.removePrefix("@@") else normalizedLine
-        val domain = extractDomainCandidate(working)
+        // 先尝试标准提取
+        var domain = extractDomainCandidate(working)
             ?.first
             ?.let(::parseDomainsFromPattern)
             ?.firstOrNull()
             ?: extractLooseDomainForUnsupportedRule(working)
-            ?: UNSUPPORTED_RULE_DOMAIN
+        // 如果标准提取失败，尝试去掉 $modifier 部分再提取
+        if (domain == null || domain == UNSUPPORTED_RULE_DOMAIN) {
+            val beforeModifier = working.split('$').firstOrNull()?.trim() ?: working
+            domain = extractDomainCandidate(beforeModifier)
+                ?.first
+                ?.let(::parseDomainsFromPattern)
+                ?.firstOrNull()
+                ?: extractLooseDomainForUnsupportedRule(beforeModifier)
+        }
+        // 最后兜底：用原始行中第一个 domain-like 字符串
+        if (domain == null || domain == UNSUPPORTED_RULE_DOMAIN) {
+            val rawDomain = extractLooseDomainForUnsupportedRule(rawLine)
+            if (rawDomain != null) domain = rawDomain
+        }
         return ParsedRule(
-            domain = domain,
+            domain = domain ?: UNSUPPORTED_RULE_DOMAIN,
             isException = isException,
             rawText = rawLine,
             cosmeticSelector = normalizedLine.take(500),
@@ -4392,9 +4764,11 @@ object RuleRepository {
     }
 
     private val looseDomainLineRegex = Regex("""([a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+)""")
+    private val looseDomainLineRegexWithPort = Regex("""([a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+)(?::\d+)?""")
 
     private fun extractLooseDomainForUnsupportedRule(line: String): String? {
-        val match = looseDomainLineRegex.find(line) ?: return null
+        val cleaned = line.split('$').firstOrNull()?.trim() ?: line
+        val match = looseDomainLineRegex.find(cleaned) ?: looseDomainLineRegexWithPort.find(cleaned) ?: return null
         return sanitizeDomain(match.value)
     }
 
@@ -6520,7 +6894,7 @@ object RuleRepository {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val oldCount = prefs.getInt(KEY_RULE_COUNT, -1)
         prefs.edit().putInt(KEY_RULE_COUNT, if (oldCount >= 0) oldCount + normalizedNew.size else normalizedNew.size).apply()
-        clearCachesAfterAppend(normalizedNew.map { it.domain }.toSet())
+        clearCachesAfterAppend(normalizedNew.map { it.domain }.toSet(), normalizedNew)
         synchronized(dnsBlockDecisionLock) {
             dnsBlockDecisionCache.clear()
         }
@@ -6547,7 +6921,7 @@ object RuleRepository {
     private fun updateRuleCacheAfterSave(context: Context, rules: List<BlockRule>) {
         if (rules.size >= LARGE_RULE_CACHE_THRESHOLD) {
             synchronized(cacheLock) {
-                cachedRules = null
+                cachedRules = rules
                 cachedRuleCount = rules.size
                 cachedBlockedDomains = null
                 cachedRuleMap = null
@@ -6577,7 +6951,7 @@ object RuleRepository {
 
     private fun rebuildCachesFromRules(context: Context, rules: List<BlockRule>) {
         synchronized(cacheLock) {
-            cachedRules = null
+            cachedRules = rules
             cachedRuleCount = rules.size
             cachedBlockedDomains = emptySet()
             val blocked = linkedSetOf<String>()
@@ -6912,7 +7286,7 @@ object RuleRepository {
         }
     }
 
-    private fun clearWhitelistCache() {
+    fun clearWhitelistDomainCache() {
         synchronized(cacheLock) {
             cachedWhitelistHits.clear()
             cachedGeneralAdTrafficHits.clear()
@@ -6920,7 +7294,11 @@ object RuleRepository {
         }
     }
 
-    private fun clearCachesAfterAppend(newDomains: Set<String>) {
+    private fun clearWhitelistCache() {
+        clearWhitelistDomainCache()
+    }
+
+    private fun clearCachesAfterAppend(newDomains: Set<String>, newRules: List<BlockRule> = emptyList()) {
         synchronized(cacheLock) {
             val index = cachedSimpleDomainIndex
             if (index != null && newDomains.isNotEmpty()) {
@@ -6935,6 +7313,12 @@ object RuleRepository {
                     importantBlocked = updated.importantBlocked,
                     exceptions = updated.exceptions
                 )
+            }
+            if (newRules.isNotEmpty()) {
+                val current = cachedRules
+                if (current != null) {
+                    cachedRules = current + newRules
+                }
             }
             cachedRuleCount = null
             cachedWhitelistHits.clear()

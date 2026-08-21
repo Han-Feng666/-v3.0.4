@@ -42,6 +42,12 @@ class AppFreezeActivity : BaseActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         binding = ActivityAppFreezeBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        val bgPath = com.HanFeng.data.FeatureSettingsRepository.getCustomBackgroundPath(this)
+        if (!bgPath.isNullOrEmpty()) {
+            binding.ivBackground.applyCustomFileBackground(bgPath)
+        } else {
+            binding.ivBackground.applyCustomAssetBackground("custom/background")
+        }
         ViewCompat.setOnApplyWindowInsetsListener(binding.rootLayout) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             view.setPadding(view.paddingLeft, bars.top + 8.dp, view.paddingRight, bars.bottom + 16.dp)

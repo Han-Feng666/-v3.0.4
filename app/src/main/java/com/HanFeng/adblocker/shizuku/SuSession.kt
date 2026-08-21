@@ -58,21 +58,61 @@ class SuSession {
     var rootVersion: String = ""
         private set
 
+    @Volatile
+    private var lastOpenDiagnostic: String = ""
+
+    fun getLastOpenDiagnostic(): String = lastOpenDiagnostic
+
+    /** 检测 su 可执行文件是否存在于常见挂载路径(不要求已授权) */
+    fun findSuBinary(): String? {
+        val candidates = listOf(
+            "/system/bin/su", "/system/xbin/su", "/sbin/su",
+            "/vendor/bin/su", "/system/kernel/su"
+        )
+        for (p in candidates) {
+            if (File(p).exists()) return p
+        }
+        return null
+    }
+
+    private fun buildOpenDiagnostic(raw: String): String {
+        val lower = raw.lowercase(Locale.ROOT)
+        return when {
+            lower.contains("no such file") || lower.contains("not found") ->
+                "未找到 su 命令（设备未获得 Root 或 Root 方案未生效）"
+            lower.contains("permission denied") ->
+                "检测到 su 但执行被拒绝（请在 Root 管理器同意授权后重试）"
+            raw.contains("su_permission_denied") || raw.contains("timed out") ->
+                "Root 授权被拒绝或无响应"
+            raw.isBlank() -> "Root 会话无输出（请确认已授权 Root）"
+            else -> "Root 不可用：${raw.take(120)}"
+        }
+    }
+
     fun open(timeoutSeconds: Long = FIRST_CALL_TIMEOUT_SEC): Boolean {
         if (permissionGranted.get()) return true
         // 不再因 permissionDenied 永久拒绝后续重试: 让用户每次操作都有机会重新授权
         permissionDenied.set(false)
+        lastOpenDiagnostic = ""
 
         Log.d(TAG, "Requesting root permission (timeout=${timeoutSeconds}s)...")
         val result = runRawInternal("echo SU_READY && id", timeoutSeconds)
 
         return if (result.contains("SU_READY") && (result.contains("uid=0") || result.contains("uid=0(root)"))) {
             permissionGranted.set(true)
+            lastOpenDiagnostic = ""
+            rootSolution = RootSolution.NOT_ROOTED
+            rootVersion = ""
             Log.d(TAG, "Root permission granted")
             detectRootSolution()
             true
         } else {
             permissionDenied.set(true)
+            lastOpenDiagnostic = buildOpenDiagnostic(result)
+            if (lastOpenDiagnostic.startsWith("未找到 su")) {
+                rootSolution = RootSolution.NOT_ROOTED
+                rootVersion = ""
+            }
             Log.e(TAG, "Root permission denied/timed out. Output: [${result.take(200)}]")
             false
         }
@@ -82,10 +122,12 @@ class SuSession {
         try {
             val magiskResult = runRawInternal("magisk -c", 5)
             if (magiskResult.isNotBlank() && !magiskResult.contains("not found")) {
-                rootSolution = RootSolution.MAGISK
-                rootVersion = magiskResult.trim()
-                Log.d(TAG, "Detected Magisk: $rootVersion")
-                return
+                if (magiskResult.contains("ed") && magiskResult.trim().length <= 40) {
+                    rootSolution = RootSolution.MAGISK
+                    rootVersion = magiskResult.trim()
+                    Log.d(TAG, "Detected Magisk: $rootVersion")
+                    return
+                }
             }
         } catch (_: Exception) {}
 
@@ -104,6 +146,22 @@ class SuSession {
                 rootSolution = RootSolution.APATCH
                 rootVersion = "APatch"
                 Log.d(TAG, "Detected APatch")
+                return
+            }
+        } catch (_: Exception) {}
+
+        // 兜底: 通过安装目录确认方案(即使前台命令被沙箱掩盖)
+        try {
+            if (runRawInternal("test -d /data/adb/magisk && echo MAGISK_DIR", 3).contains("MAGISK_DIR")) {
+                rootSolution = RootSolution.MAGISK
+                rootVersion = "Magisk(目录检测)"
+                return
+            }
+        } catch (_: Exception) {}
+        try {
+            if (runRawInternal("test -d /data/adb/ksu && echo KSU_DIR", 3).contains("KSU_DIR")) {
+                rootSolution = RootSolution.KERNELSU
+                rootVersion = "KernelSU(目录检测)"
                 return
             }
         } catch (_: Exception) {}
