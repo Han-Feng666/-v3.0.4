@@ -13,7 +13,7 @@
                 android:top="3dp" />
         </shape>
     </item>
-    <!-- 玻璃体填充：极淡白底渐变模拟高斯模糊效果 -->
+    <!-- 玻璃体填充：较高不透明白底渐变，配合 FLAG_BLUR_BEHIND 实现毛玻璃且避免与背后文字重叠 -->
     <item
         android:bottom="3dp"
         android:left="0dp"
@@ -22,9 +22,9 @@
         <shape android:shape="rectangle">
             <gradient
                 android:angle="270"
-                android:centerColor="#2EFFFFFF"
-                android:endColor="#20FFFFFF"
-                android:startColor="#42FFFFFF" />
+                android:centerColor="#E6FFFFFF"
+                android:endColor="#D9FFFFFF"
+                android:startColor="#F0FFFFFF" />
             <corners android:radius="22dp" />
         </shape>
     </item>

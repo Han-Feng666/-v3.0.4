@@ -74,6 +74,12 @@ public class ShizukuProvider extends ContentProvider {
 
     private static final String EXTRA_BINDER = "com.HanFeng.shizuku.intent.extra.BINDER";
 
+    // 官方 Shizuku server (moe.shizuku.privileged.api) 向客户端推 binder 时使用官方 key。
+    // 本 app 手机端可能跑官方 server(用户通过官方 App 启动), 而本 app 内置的是 fork provider,
+    // 因此读取时必须同时兼容官方 key, 否则官方 server 推来的 binder 被静默丢弃,
+    // 表现为 "Shizuku 已激活但本应用永远申请不了授权"。
+    private static final String EXTRA_BINDER_OFFICIAL = "moe.shizuku.privileged.api.intent.extra.BINDER";
+
     public static final String PERMISSION = "com.HanFeng.permission.shizuku.API_V23";
 
     public static final String MANAGER_APPLICATION_ID = "com.HanFeng";
@@ -108,6 +114,21 @@ public class ShizukuProvider extends ContentProvider {
     }
 
     /**
+     * 兼容 fork 与官方两种 server 推 binder 时的 extra key。
+     * 官方 server 用 moe.shizuku.privileged.api.intent.extra.BINDER，
+     * 内置 fork server 用 com.HanFeng.shizuku.intent.extra.BINDER。
+     */
+    @Nullable
+    private static BinderContainer readBinderContainer(@Nullable Bundle bundle) {
+        if (bundle == null) return null;
+        BinderContainer container = bundle.getParcelable(EXTRA_BINDER);
+        if (container == null || container.binder == null) {
+            container = bundle.getParcelable(EXTRA_BINDER_OFFICIAL);
+        }
+        return (container != null && container.binder == null) ? null : container;
+    }
+
+    /**
      * Require binder for non-provider process, should have {@link #enableMultiProcessSupport(boolean)} called first.
      *
      * @param context Context
@@ -122,7 +143,7 @@ public class ShizukuProvider extends ContentProvider {
         BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                BinderContainer container = intent.getParcelableExtra(EXTRA_BINDER);
+                BinderContainer container = readBinderContainer(intent.getExtras());
                 if (container != null && container.binder != null) {
                     Log.i(TAG, "binder received from broadcast");
                     Shizuku.onBinderReceived(container.binder, context.getPackageName());
@@ -147,7 +168,7 @@ public class ShizukuProvider extends ContentProvider {
         if (reply != null) {
             reply.setClassLoader(BinderContainer.class.getClassLoader());
 
-            BinderContainer container = reply.getParcelable(EXTRA_BINDER);
+            BinderContainer container = readBinderContainer(reply);
             if (container != null && container.binder != null) {
                 Log.i(TAG, "Binder received from other process");
                 Shizuku.onBinderReceived(container.binder, context.getPackageName());
@@ -213,7 +234,7 @@ public class ShizukuProvider extends ContentProvider {
             return;
         }
 
-        BinderContainer container = extras.getParcelable(EXTRA_BINDER);
+        BinderContainer container = readBinderContainer(extras);
         if (container != null && container.binder != null) {
             Log.d(TAG, "binder received");
 

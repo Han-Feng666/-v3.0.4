@@ -33,6 +33,11 @@ private fun AlertDialog.applyEnhancedWindow(): AlertDialog {
     window?.let { w ->
         w.setBackgroundDrawableResource(R.drawable.bg_dialog_window)
         w.setWindowAnimations(R.style.HanFengDialogAnimation)
+        // 液态玻璃：Android 12+ 对弹窗背后的内容做真实高斯模糊，避免半透明背景与界面字体重叠
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            w.addFlags(android.view.WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
+            w.attributes = w.attributes.apply { blurBehindRadius = 24 }
+        }
     }
     return this
 }

@@ -173,11 +173,31 @@ class DeviceIdModifier {
             return session.open(timeoutSeconds = 60)
         }
 
-        /** 检测 resetprop 是否可用 (Magisk/KSU 有, 纯 root shell 无) */
-        fun hasResetprop(): Boolean {
-            val r = SuSession.getInstance().execute("command -v resetprop 2>/dev/null && echo FOUND || echo NOT_FOUND", 5)
-            return r.output.contains("FOUND")
+        /**
+         * 解析可用的 resetprop 完整命令 (含路径)。
+         * Magisk 的 resetprop 在 PATH 中；KernelSU/APatch 的不在 PATH，需要按常见挂载路径探测。
+         * 返回 null 表示设备无任何 resetprop (纯 su / shizuku 环境)。
+         */
+        fun resolveResetpropCmd(): String? {
+            val session = SuSession.getInstance()
+            val inPath = session.execute("command -v resetprop 2>/dev/null", 5)
+            val fromPath = inPath.output.trim().lines().lastOrNull { it.isNotBlank() }
+            if (!fromPath.isNullOrBlank() && !fromPath.contains("not found")) return fromPath
+            // KernelSU / APatch / Magisk 的 resetprop 不在 PATH 时的常见安装位置
+            for (p in listOf(
+                "/data/adb/ksu/bin/resetprop",
+                "/data/adb/ap/bin/resetprop",
+                "/data/adb/magisk/resetprop",
+                "/debug_ramdisk/resetprop"
+            )) {
+                val exists = session.execute("test -x '$p' && echo YES || echo NO", 5)
+                if (exists.output.contains("YES")) return p
+            }
+            return null
         }
+
+        /** 检测 resetprop 是否可用 (Magisk/KSU/APatch 有, 纯 root shell 无) */
+        fun hasResetprop(): Boolean = resolveResetpropCmd() != null
 
         /**
          * 全面诊断 Root 环境，返回可读的诊断报告。
@@ -240,6 +260,37 @@ class DeviceIdModifier {
                 appendLine("root 会话: ${if (SuSession.getInstance().isSessionOpen()) "已授权" else "未授权"}")
                 appendLine("resetprop 可用: ${if (hasResetprop()) "是" else "否 (KernelSU 或原始 su, ro.* 无法通过 setprop 修改)"}")
                 appendLine("提示: 若设备使用 KernelSU, ro.* 类属性只能通过 KSU WebUI 或模块覆盖; 非 ro.* 属性可通过 setprop 修改")
+                appendLine("")
+                appendLine(diagnoseRootEnvironment())
+            }
+            return ShellResult(-1, diag.toString())
+        }
+
+        /**
+         * 验证一组 prop 是否已写入期望值：任一 prop 读回 == expected 即视为成功。
+         * 全部未命中时返回失败并附完整诊断，避免"假成功"。
+         */
+        fun verifyPropGroup(
+            label: String,
+            expected: String,
+            props: List<String>,
+            timeout: Long = 5
+        ): ShellResult {
+            val session = SuSession.getInstance()
+            val hit = mutableListOf<String>()
+            for (key in props) {
+                val v = session.execute("getprop '$key' 2>/dev/null || echo ''", timeout).output.trim()
+                if (v == expected) hit.add(key)
+            }
+            if (hit.isNotEmpty()) {
+                return ShellResult(0, "$label 写入成功 (已验证生效: ${hit.joinToString(", ")})")
+            }
+            val diag = buildString {
+                appendLine("$label 写入后验证失败: 期望值 '$expected' 未在任一目标 prop 上生效")
+                appendLine("已写入目标: ${props.joinToString(", ")}")
+                appendLine("resetprop 可用: ${if (hasResetprop()) "是" else "否"}")
+                appendLine("提示: KernelSU/APatch 的 resetprop 位于 /data/adb/ksu/bin 或 /data/adb/ap/bin; " +
+                        "若为纯 su 环境, ro.* 属性无法通过 setprop 修改, 需 Magisk 模块或 KSU 模块覆盖")
                 appendLine("")
                 appendLine(diagnoseRootEnvironment())
             }
@@ -481,7 +532,7 @@ class DeviceIdModifier {
         }
         if (buildSerial.isNotBlank()) {
             val escBuild = SuSession.getInstance().escapeShell(buildSerial).replace("\$", "\\$")
-            runRootShell("resetprop ro.build.serialno '$escBuild' 2>/dev/null || true")
+            runRootShell(buildPropSetCmd("ro.build.serialno", escBuild))
             results.add("Build Serial: 已恢复")
         }
 
@@ -498,7 +549,9 @@ class DeviceIdModifier {
         sb.appendLine("Boot Serial: ${runRootShell("getprop ro.boot.serialno 2>/dev/null || echo '(none)'").output}")
         sb.appendLine("Persist Serial: ${runRootShell("getprop persist.sys.serialno 2>/dev/null || echo '(none)'").output}")
         sb.appendLine("Global XML Serial: ${readGlobalXmlSerial()}")
-        sb.appendLine("Magisk resetprop: ${runRootShell("resetprop ro.serialno 2>/dev/null || echo '(unavailable)'").output}")
+        sb.appendLine("Magisk resetprop: ${runRootShell(
+            (DeviceIdModifier.resolveResetpropCmd() ?: "resetprop") + " ro.serialno 2>/dev/null || echo '(unavailable)'"
+        ).output}")
         return ShellResult(0, sb.toString())
     }
 
@@ -582,9 +635,9 @@ fun writeSerialNo(newSerial: String): ShellResult {
         val cmds = mutableListOf<String>()
 
         // 1. 立即生效：resetprop 改 property service 内存
-        cmds.add("resetprop ro.serialno '$escaped' 2>/dev/null || true")
-        cmds.add("resetprop ro.boot.serialno '$escaped' 2>/dev/null || true")
-        cmds.add("setprop persist.sys.serialno '$escaped' 2>/dev/null || true")
+        cmds.add(buildPropSetCmd("ro.serialno", escapedForSh))
+        cmds.add(buildPropSetCmd("ro.boot.serialno", escapedForSh))
+        cmds.add("setprop persist.sys.serialno '$escapedForSh' 2>/dev/null || true")
 
         // 2. 写入 settings_global.xml 的 device_serial 字段
         cmds.add("if [ -f '$GLOBAL_XML' ]; then " +
@@ -648,8 +701,8 @@ fun writeSerialNo(newSerial: String): ShellResult {
         removeModuleProps(listOf("ro.serialno", "ro.boot.serialno", "persist.sys.serialno"))
         // 实时把 prop 删掉, 让系统回到 bootloader 写入的原始值
         runRootShell(
-            "resetprop --delete ro.serialno 2>/dev/null || true; " +
-            "resetprop --delete ro.boot.serialno 2>/dev/null || true; " +
+            buildPropDeleteCmd("ro.serialno") + "; " +
+            buildPropDeleteCmd("ro.boot.serialno") + "; " +
             "setprop persist.sys.serialno '' 2>/dev/null || true; " +
             "echo 'CLEAR_DONE'"
         )
@@ -716,7 +769,7 @@ fun writeSerialNo(newSerial: String): ShellResult {
 
         val cmds = mutableListOf<String>()
         for (key in SN_WRITE_PROPS) {
-            cmds.add("resetprop $key '$escaped' 2>/dev/null || setprop $key '$escaped' 2>/dev/null || true")
+            cmds.add(buildPropSetCmd(key, escaped))
         }
         // 同步写 settings_global.xml 的 device_serial, 让 Settings 详情里也变
         cmds.add(
@@ -735,7 +788,11 @@ fun writeSerialNo(newSerial: String): ShellResult {
         val shEscSn = SuSession.getInstance().escapeShell(newSn)
         upsertModuleProps(SN_WRITE_PROPS.map { it to shEscSn })
 
-        return runRootShell(cmds.joinToString("\n"))
+        val result = runRootShell(cmds.joinToString("\n"))
+
+        // 写后验证：任一目标 prop 生效即视为成功，否则如实报错（避免"假成功"）
+        val verify = DeviceIdModifier.verifyPropGroup("SN 码", newSn, SN_WRITE_PROPS)
+        return if (verify.exitCode == 0) result else verify
     }
 
     fun restoreSn(): ShellResult {
@@ -757,7 +814,7 @@ fun writeSerialNo(newSerial: String): ShellResult {
             if (key !in snWriteSet) continue
             val value = line.substring(eq + 1).trim()
             val escaped = SuSession.getInstance().escapeShell(value).replace("\$", "\\$")
-            cmds.add("resetprop $key '$escaped' 2>/dev/null || true")
+            cmds.add(buildPropSetCmd(key, escaped))
         }
         cmds.add("rm -f /data/local/tmp/.hf_sn_backup 2>/dev/null")
         cmds.add("echo 'SN_RESTORED'")
@@ -1147,7 +1204,7 @@ fun writeSerialNo(newSerial: String): ShellResult {
         val escaped = SuSession.getInstance().escapeShell(newImei).replace("\$", "\\$")
         val cmds = mutableListOf<String>()
         for (key in IMEI_WRITE_PROPS) {
-            cmds.add("resetprop $key '$escaped' 2>/dev/null || setprop $key '$escaped' 2>/dev/null || true")
+            cmds.add(buildPropSetCmd(key, escaped))
         }
         // 杀 com.android.phone 让它下次从 prop 回读
         cmds.add("killall com.android.phone 2>/dev/null || true")
@@ -1156,21 +1213,27 @@ fun writeSerialNo(newSerial: String): ShellResult {
         // 落地到统一 module
         val shEsc = SuSession.getInstance().escapeShell(newImei)
         upsertModuleProps(IMEI_WRITE_PROPS.map { it to shEsc })
-        return runRootShell(cmds.joinToString("\n"))
+        val result = runRootShell(cmds.joinToString("\n"))
+        // 写后验证 prop 伪装层
+        val verify = DeviceIdModifier.verifyPropGroup("IMEI prop 伪装", newImei, IMEI_WRITE_PROPS)
+        return if (verify.exitCode == 0) result else verify
     }
 
     private fun writeMeidProp(newMeid: String): ShellResult {
         val escaped = SuSession.getInstance().escapeShell(newMeid).replace("\$", "\\$")
         val cmds = mutableListOf<String>()
         for (key in MEID_WRITE_PROPS) {
-            cmds.add("resetprop $key '$escaped' 2>/dev/null || setprop $key '$escaped' 2>/dev/null || true")
+            cmds.add(buildPropSetCmd(key, escaped))
         }
         cmds.add("killall com.android.phone 2>/dev/null || true")
         cmds.add("am force-stop com.android.phone 2>/dev/null || true")
         cmds.add("echo 'MEID_PROP_DONE'")
         val shEsc = SuSession.getInstance().escapeShell(newMeid)
         upsertModuleProps(MEID_WRITE_PROPS.map { it to shEsc })
-        return runRootShell(cmds.joinToString("\n"))
+        val result = runRootShell(cmds.joinToString("\n"))
+        // 写后验证 prop 伪装层
+        val verify = DeviceIdModifier.verifyPropGroup("MEID prop 伪装", newMeid, MEID_WRITE_PROPS)
+        return if (verify.exitCode == 0) result else verify
     }
 
     /**
@@ -1220,9 +1283,9 @@ fun writeSerialNo(newSerial: String): ShellResult {
             backupCurrentImei()
             val esc = SuSession.getInstance().escapeShell(imei2).replace("\$", "\\$")
             val cmds = mutableListOf<String>()
-            cmds.add("resetprop gsm.imei2 '$esc' 2>/dev/null || setprop gsm.imei2 '$esc' 2>/dev/null || true")
-            cmds.add("resetprop persist.sys.imei2 '$esc' 2>/dev/null || setprop persist.sys.imei2 '$esc' 2>/dev/null || true")
-            cmds.add("resetprop ril.imei2 '$esc' 2>/dev/null || setprop ril.imei2 '$esc' 2>/dev/null || true")
+            cmds.add(buildPropSetCmd("gsm.imei2", esc))
+            cmds.add(buildPropSetCmd("persist.sys.imei2", esc))
+            cmds.add(buildPropSetCmd("ril.imei2", esc))
             cmds.add("killall com.android.phone 2>/dev/null || true")
             val shEsc = SuSession.getInstance().escapeShell(imei2)
             upsertModuleProps(listOf(
@@ -1286,7 +1349,7 @@ fun writeSerialNo(newSerial: String): ShellResult {
                 focusedKey = key
             }
             val escaped = SuSession.getInstance().escapeShell(value).replace("\$", "\\$")
-            cmds.add("resetprop $key '$escaped' 2>/dev/null || true")
+            cmds.add(buildPropSetCmd(key, escaped))
         }
         cmds.add("killall com.android.phone 2>/dev/null || true")
         cmds.add("am force-stop com.android.phone 2>/dev/null || true")
@@ -1318,7 +1381,7 @@ fun writeSerialNo(newSerial: String): ShellResult {
             if (key !in writePropsSet) continue
             val value = line.substring(eq + 1).trim()
             val escaped = SuSession.getInstance().escapeShell(value).replace("\$", "\\$")
-            cmds.add("resetprop $key '$escaped' 2>/dev/null || true")
+            cmds.add(buildPropSetCmd(key, escaped))
         }
         cmds.add("killall com.android.phone 2>/dev/null || true")
         cmds.add("am force-stop com.android.phone 2>/dev/null || true")
@@ -1331,7 +1394,7 @@ fun writeSerialNo(newSerial: String): ShellResult {
         removeModuleProps(IMEI_WRITE_PROPS)
         val cmds = mutableListOf<String>()
         for (key in IMEI_WRITE_PROPS) {
-            cmds.add("resetprop --delete $key 2>/dev/null || true")
+            cmds.add(buildPropDeleteCmd(key))
         }
         cmds.add("echo 'IMEI_CLEAR_DONE'")
         return runRootShell(cmds.joinToString("\n"))
@@ -1341,7 +1404,7 @@ fun writeSerialNo(newSerial: String): ShellResult {
         removeModuleProps(MEID_WRITE_PROPS)
         val cmds = mutableListOf<String>()
         for (key in MEID_WRITE_PROPS) {
-            cmds.add("resetprop --delete $key 2>/dev/null || true")
+            cmds.add(buildPropDeleteCmd(key))
         }
         cmds.add("echo 'MEID_CLEAR_DONE'")
         return runRootShell(cmds.joinToString("\n"))
@@ -1468,7 +1531,7 @@ fun writeSerialNo(newSerial: String): ShellResult {
         val cmds = mutableListOf<String>()
         val targets = if (targetProp != null) listOf(targetProp) else MAINBOARD_PROPS
         for (key in targets) {
-            cmds.add("resetprop $key '$escaped' 2>/dev/null || setprop $key '$escaped' 2>/dev/null || true")
+            cmds.add(buildPropSetCmd(key, escaped))
         }
         cmds.add("echo 'MAINBOARD_DONE'")
 
@@ -1479,7 +1542,11 @@ fun writeSerialNo(newSerial: String): ShellResult {
         // 落地到统一 module hf_device_props (不再单独刷 hf_mainboard)
         upsertModuleProps(targets.map { it to escaped })
 
-        return runRootShell(cmds.joinToString("\n"))
+        val result = runRootShell(cmds.joinToString("\n"))
+
+        // 写后验证：任一目标 prop 生效即视为成功，否则如实报错（避免"假成功"）
+        val verify = DeviceIdModifier.verifyPropGroup("主板 ID", cleaned, targets)
+        return if (verify.exitCode == 0) result else verify
     }
 
     /**
@@ -1500,7 +1567,7 @@ fun writeSerialNo(newSerial: String): ShellResult {
         // 实时删除运行中的 prop 值
         val cmds = mutableListOf<String>()
         for (key in MAINBOARD_PROPS) {
-            cmds.add("resetprop --delete $key 2>/dev/null || true")
+            cmds.add(buildPropDeleteCmd(key))
         }
         cmds.add("echo 'MAINBOARD_CLEAR_DONE'")
         return runRootShell(cmds.joinToString("\n"))
@@ -1517,7 +1584,7 @@ fun writeSerialNo(newSerial: String): ShellResult {
         }
         removeModuleProps(listOf(targetKey))
         val r = runRootShell(
-            "resetprop --delete $targetKey 2>/dev/null || true; " +
+            buildPropDeleteCmd(targetKey) + "; " +
             "echo 'MAINBOARD_CLEAR_DONE'"
         )
         return r
@@ -1636,7 +1703,7 @@ fun writeSerialNo(newSerial: String): ShellResult {
         for ((value, props) in plan) {
             val escaped = esc(value)
             for (key in props) {
-                cmds.add("resetprop $key '$escaped' 2>/dev/null || setprop $key '$escaped' 2>/dev/null || true")
+                cmds.add(buildPropSetCmd(key, escaped))
             }
         }
         cmds.add("echo 'MODEL_DONE'")
@@ -1651,7 +1718,16 @@ fun writeSerialNo(newSerial: String): ShellResult {
         }
         upsertModuleProps(upsertPairs)
 
-        return runRootShell(cmds.joinToString("\n"))
+        val result = runRootShell(cmds.joinToString("\n"))
+
+        // 写后验证：逐字段读回，任一字段所有目标 prop 均未生效则如实报错
+        val failures = mutableListOf<String>()
+        for ((value, props) in plan) {
+            val v = DeviceIdModifier.verifyPropGroup("手机型号", value, props)
+            if (v.exitCode != 0) failures.add(v.output)
+        }
+        return if (failures.isEmpty()) result
+        else ShellResult(-1, failures.joinToString("\n\n"))
     }
 
     fun clearModelModule(): ShellResult {
@@ -1660,7 +1736,7 @@ fun writeSerialNo(newSerial: String): ShellResult {
         // 实时删除运行时 prop
         val cmds = mutableListOf<String>()
         for (key in MANUFACTURER_PROPS + BRAND_PROPS + MODEL_PROPS + MARKETNAME_PROPS) {
-            cmds.add("resetprop --delete $key 2>/dev/null || true")
+            cmds.add(buildPropDeleteCmd(key))
         }
         cmds.add("echo 'MODEL_CLEAR_DONE'")
         return runRootShell(cmds.joinToString("\n"))
@@ -1687,6 +1763,29 @@ fun writeSerialNo(newSerial: String): ShellResult {
 
     private fun escapeSedValue(value: String): String {
         return value.replace("&", "\\&").replace("/", "\\/").replace("\\", "\\\\")
+    }
+
+    /**
+     * 生成写单条 prop 的命令：优先 resetprop(带完整路径，Magisk/KSU/APatch 通用)，
+     * 无 resetprop 时回退 setprop。单条失败不中断后续脚本，由写后验证兜底。
+     */
+    private fun buildPropSetCmd(key: String, escapedValue: String): String {
+        val rp = DeviceIdModifier.resolveResetpropCmd()
+        return if (rp != null) {
+            "$rp $key '$escapedValue' 2>/dev/null || true"
+        } else {
+            "setprop $key '$escapedValue' 2>/dev/null || true"
+        }
+    }
+
+    /** 生成删除单条 prop 的命令：优先 resetprop(带完整路径)，无则回退 setprop 置空 */
+    private fun buildPropDeleteCmd(key: String): String {
+        val rp = DeviceIdModifier.resolveResetpropCmd()
+        return if (rp != null) {
+            "$rp --delete $key 2>/dev/null || true"
+        } else {
+            "setprop $key '' 2>/dev/null || true"
+        }
     }
 
     private fun runRootShell(command: String): ShellResult {
