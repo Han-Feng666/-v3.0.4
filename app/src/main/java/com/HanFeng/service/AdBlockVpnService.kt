@@ -2063,7 +2063,16 @@ class AdBlockVpnService : VpnService() {
                 RuleRepository.isSensitiveAuthDomain(question.domain)
         }
 
-        val adFreeRewardProtection = resolveAdFreeRewardProtection(question.domain, vendor, appName, protectedQuestion)
+        val adFreeRewardProtection = if (FeatureSettingsRepository.isAdFreeRewardEnabled(this)) {
+            // 奖励放行必须先于规则命中判定：激励视频 SDK 域名普遍在规则库中，
+            // 若让 sinkhole/SNI 规则命中先生效，开关打开也照拦，功能形同虚设。
+            // 白名单/鉴权域名例外：绝不因奖励模式放行登录支付链路
+            looksLikeAdFreeRewardDomain(question.domain) &&
+                !RuleRepository.isWhitelistedDomain(question.domain) &&
+                !RuleRepository.isSensitiveAuthDomain(question.domain)
+        } else {
+            resolveAdFreeRewardProtection(question.domain, vendor, appName, protectedQuestion)
+        }
         if (domainContext.matchedRule != null && !protectedQuestion && !adFreeRewardProtection) {
             val rewriteTarget = domainContext.matchedRule.dnsrewrite
             if (!rewriteTarget.isNullOrBlank()) {
@@ -2200,7 +2209,16 @@ class AdBlockVpnService : VpnService() {
                 RuleRepository.isSensitiveAuthDomain(question.domain)
         }
 
-        val adFreeRewardProtection = resolveAdFreeRewardProtection(question.domain, vendor, appName, protectedQuestion)
+        val adFreeRewardProtection = if (FeatureSettingsRepository.isAdFreeRewardEnabled(this)) {
+            // 奖励放行必须先于规则命中判定：激励视频 SDK 域名普遍在规则库中，
+            // 若让 sinkhole/SNI 规则命中先生效，开关打开也照拦，功能形同虚设。
+            // 白名单/鉴权域名例外：绝不因奖励模式放行登录支付链路
+            looksLikeAdFreeRewardDomain(question.domain) &&
+                !RuleRepository.isWhitelistedDomain(question.domain) &&
+                !RuleRepository.isSensitiveAuthDomain(question.domain)
+        } else {
+            resolveAdFreeRewardProtection(question.domain, vendor, appName, protectedQuestion)
+        }
         if (domainContext.matchedRule != null && !protectedQuestion && !adFreeRewardProtection) {
             val rewriteTarget = domainContext.matchedRule.dnsrewrite
             val rewrittenResponse = if (!rewriteTarget.isNullOrBlank()) {
@@ -8631,6 +8649,23 @@ class AdBlockVpnService : VpnService() {
         appName: String,
         qType: Int? = null
     ): DomainDecisionContext {
+        // 免广告领奖励模式：激励视频 SDK 域名普遍在规则库中，规则命中若先生效，
+        // QUIC/MITM 层会继续把奖励流量当广告强制降级/断流，开关形同虚设。
+        // 仅放行明确奖励语义域名，白名单/鉴权域名不受影响
+        if (FeatureSettingsRepository.isAdFreeRewardEnabled(this)) {
+            val lowerDomain = domain.trim().lowercase()
+            if ((lowerDomain.contains("reward") || lowerDomain.contains("incentiv")) &&
+                !RuleRepository.isWhitelistedDomain(domain) &&
+                !RuleRepository.isSensitiveAuthDomain(domain)
+            ) {
+                return DomainDecisionContext(
+                    appName = appName,
+                    matchedRule = null,
+                    vendor = classifyVendorCached(domain, appName),
+                    reason = "adfree-reward-pass"
+                )
+            }
+        }
         val matchedRule = RuleRepository.findMatchingRule(
             context = this,
             domain = domain,
