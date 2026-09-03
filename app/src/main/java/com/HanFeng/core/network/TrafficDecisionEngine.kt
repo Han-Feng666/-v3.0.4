@@ -289,13 +289,13 @@ object TrafficDecisionEngine {
 
     fun isInQuicBlockedCidr(destinationIp: String): Boolean {
         if (destinationIp.isBlank()) return false
-        val cidr = extractCidr24(destinationIp) ?: return false
+        val cidr = extractCidr(destinationIp) ?: return false
         pruneCidrsIfNeeded()
         synchronized(quicBlockedCidrs) { return quicBlockedCidrs.contains(cidr) }
     }
 
     fun recordQuicAdIpHit(destinationIp: String) {
-        val cidr = extractCidr24(destinationIp) ?: return
+        val cidr = extractCidr(destinationIp) ?: return
         synchronized(quicCidrHitCounts) {
             val count = (quicCidrHitCounts[cidr] ?: 0) + 1
             quicCidrHitCounts[cidr] = count
@@ -320,6 +320,25 @@ object TrafficDecisionEngine {
             if (num < 0 || num > 255) return null
         }
         return "${parts[0]}.${parts[1]}.${parts[2]}.0/24"
+    }
+
+    /** IPv4 按 /24 聚合，IPv6 按 /64 聚合（QUIC 广告基础设施通常落在同一 /64 内） */
+    private fun extractCidr(ip: String): String? {
+        val cleaned = ip.trim()
+        if (cleaned.isEmpty()) return null
+        if (!cleaned.contains(':')) return extractCidr24(cleaned)
+        return runCatching {
+            val addr = InetAddress.getByName(cleaned)
+            if (addr.address.size != 16) return null
+            val prefix = ByteArray(8)
+            System.arraycopy(addr.address, 0, prefix, 0, 8)
+            val sb = StringBuilder(45)
+            for (i in 0 until 16 step 2) {
+                if (i > 0) sb.append(':')
+                sb.append(String.format("%x", ((prefix[i].toInt() and 0xFF) shl 8) or (prefix[i + 1].toInt() and 0xFF)))
+            }
+            "$sb/64"
+        }.getOrNull()
     }
 
     private fun pruneCidrsIfNeeded() {

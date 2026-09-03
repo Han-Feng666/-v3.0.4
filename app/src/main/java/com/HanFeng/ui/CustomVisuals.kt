@@ -22,6 +22,12 @@ private const val CUSTOM_VISUALS_JOB_TAG_KEY = -1008611
 private const val CUSTOM_VISUALS_CONTEXT_TAG_KEY = -1008612
 private const val CUSTOM_VISUALS_BG_ID_KEY = -1008613
 
+/**
+ * asset 自定义背景缺失时的哨兵Drawable：命中即表示"确认无图"，
+ * 跳过重复 IO，调用方需与真实背景区分（不能 set 到 ImageView）
+ */
+private val EMPTY_BACKGROUND_MARKER: Drawable = android.graphics.drawable.ColorDrawable(0x00000000)
+
 /** 为 Activity 应用自定义背景图：优先复用布局中已存在的 ivBackground，否则在内容根部动态添加。 */
 fun androidx.appcompat.app.AppCompatActivity.ensureAppBackground() {
     val customPath = com.HanFeng.data.FeatureSettingsRepository.getCustomBackgroundPath(this)
@@ -107,8 +113,9 @@ fun ImageView.applyCustomAssetBackground(assetBaseName: String) {
     }
     val appContext = context.applicationContext
     setTag(CUSTOM_VISUALS_CONTEXT_TAG_KEY, WeakReference(appContext))
-    // 同步命中缓存直接设置,跳过协程开销
+    // 同步命中缓存直接设置,跳过协程开销；命中空标记表示确认无自定义图，直接结束
     customBackgroundDrawableCache.get("asset:$assetBaseName")?.let { cached ->
+        if (cached === EMPTY_BACKGROUND_MARKER) return
         markBitmapLive(cached)
         setImageDrawable(cached)
         return
@@ -116,7 +123,12 @@ fun ImageView.applyCustomAssetBackground(assetBaseName: String) {
     val job = customVisualsScope.launch {
         val customDrawable = withContext(Dispatchers.IO) {
             loadCustomAssetDrawable(appContext, assetBaseName)
-        } ?: return@launch
+        }
+        if (customDrawable == null) {
+            // 无自定义图：缓存空标记，避免每次 onResume 重复打开 4 个扩展名的 asset 流
+            customBackgroundDrawableCache.put("asset:$assetBaseName", EMPTY_BACKGROUND_MARKER)
+            return@launch
+        }
         customBackgroundDrawableCache.put("asset:$assetBaseName", customDrawable)
         val ctxRef = getTag(CUSTOM_VISUALS_CONTEXT_TAG_KEY) as? WeakReference<*>
         if (ctxRef?.get() == appContext && isAttachedToWindow) {

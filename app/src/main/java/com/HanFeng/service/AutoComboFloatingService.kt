@@ -346,6 +346,12 @@ class AutoComboFloatingService : Service() {
             Toast.makeText(this, "回放中请先停止回放", Toast.LENGTH_SHORT).show()
             return
         }
+        // 无障碍服务未开启时录制坐标仍会生成，但手势注入会静默跳过，用户录完才发现无效
+        if (AutoComboAccessibilityService.current == null) {
+            Toast.makeText(this, "请先在系统无障碍设置中开启寒枫的自动连招服务", Toast.LENGTH_LONG).show()
+            AutoComboAccessibilityService.openAccessibilitySettings(this)
+            return
+        }
         recorder = AutoComboRecorder(windowManager).also {
             it.callback = object : AutoComboRecorder.Callback {
                 override fun onStepChanged(stepCount: Int) {

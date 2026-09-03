@@ -403,7 +403,17 @@ class GuideActivity : BaseActivity() {
             "10. 手动恢复权限按钮：把 /mnt/vendor/persist/data 权限立即设为 700。如果守护未正确还原权限（比如寒枫被杀导致无后续 sleep），可手动触发恢复。\n" +
             "11. 真死指纹条件：只有当列表中所有游戏都还运行在后台（pidof 返回非空）就关机刷机清数据。正常使用场景下：必须划掉后台退出游戏，下一轮扫描检测到没有 pidof 时会自动清理并还原权限，不会触发真死。\n" +
             "12. 重启不会真死：守护脚本启动时会先显式 chmod 700 还原权限，重启后系统其它服务可正常写入 /mnt/vendor/persist/data。\n" +
-            "13. 与 Root 隐藏的关系：两者都在 /data/adb/ 下创建工作目录、都用 SuSession 执行 root 命令、都用 nohup sh 持久运行。但 Root 隐藏是 zygisk mount bind 隐藏路径 + prop 伪装，防的是 Root 检测；游戏防设备标记是 chmod + 文件清理，防的是设备识别追踪，互不冲突可同时启用。"
+            "13. 与 Root 隐藏的关系：两者都在 /data/adb/ 下创建工作目录、都用 SuSession 执行 root 命令、都用 nohup sh 持久运行。但 Root 隐藏是 zygisk mount bind 隐藏路径 + prop 伪装，防的是 Root 检测；游戏防设备标记是 chmod + 文件清理，防的是设备识别追踪，互不冲突可同时启用。\n" +
+            "二十四、Root 区域功能说明（需 Root）\n" +
+            "1. 修改 Android ID：Android 8 之后每个 App 读到的是按包名隔离的独立 Android ID（SSAID）。寒枫修改时会同时重写系统全局值和全部 App 级 SSAID 条目，修改后目标 App 下次读取即拿到新 ID；写后自动验证，失败会给出完整诊断。\n" +
+            "2. 修改主板序列号：同时覆盖 ro.serialno / ro.boot.serialno / persist.sys.serialno 三条属性，并同步写入系统设置存储。优先使用 resetprop（Magisk/KernelSU/APatch 通用），无 resetprop 的纯 su 环境会自动落 Magisk 模块，重启后生效。\n" +
+            "3. 修改 SN 码 / IMEI / MEID：按机型常见的属性同源集（gsm/ril/persist 系）逐条写入并持久化到统一模块，双卡机型 IMEI 支持分别修改 IMEI1 和 IMEI2；写后自动读回验证，全部未生效时明确提示而不是假成功。\n" +
+            "4. 属性保持守护（新）：安装 / 钦定任何设备标识后，自动启动 /data/adb/HanFengPropWatch 常驻守护，每 30 秒核对一次全部已写入属性，发现被系统（如 RIL/基带回读）覆盖立即恢复；开机由模块 service.sh 自动拉起守护，重启后保护持续有效。使用\"恢复默认\"会同步停止守护。\n" +
+            "5. 修改 CPUID 和 CELLID / 手机型号：同样支持实时 resetprop + 模块持久化双层生效，主板 ID 会按真实 SoC 平台代号格式校验（小写字母数字）。\n" +
+            "6. 第三方应用转系统应用：把普通 App 移动到 /system/priv-app 或 /system/app 分区，用于获得系统级权限；转换前自动备份，可在应用列表中恢复。\n" +
+            "7. 证书安装到系统 / 腾讯游戏防设备标记：两个功能此前已可用，本轮保持不变。\n" +
+            "8. 统一模块：所有设备标识功能共用一个 Magisk/KSU 模块 /data/adb/modules/hf_device_props，属性清单集中在 props.list，Root 管理器里只显示一个模块；删除规则会同步清理对应属性行，全部清空时模块自动停用。\n" +
+            "9. 失败排查：任何修改失败时弹窗会附带 Root 环境诊断（授权状态、Root 方案版本、resetprop 可用性、模块安装状态），按提示处理后重试即可；KernelSU/APatch 用户确认 resetprop 路径存在时优先检查 /data/adb/ksu/bin 或 /data/adb/ap/bin。"
 
         fun createIntent(context: Context, title: String, content: String): Intent {
             return Intent(context, GuideActivity::class.java)

@@ -61,6 +61,8 @@ class ProcessMonitor private constructor(private val context: Context) {
         /**
          * 是否已有可用的 shell 后端(Shizuku 已授权或 root 可用),
          * 供 UI 在"只能看到本应用"时判断是否需要引导用户授权.
+         * 注意：root 探测只做无阻塞的 su 二进制存在性检查（findSuBinary），
+         * 绝不能在调用方主线程触发 SuSession.open()（会同步 fork su 等授权框，最长 60s，直接 ANR）。
          */
         fun isBackingShellAvailable(): Boolean {
             val shizukuOk = runCatching {
@@ -68,9 +70,9 @@ class ProcessMonitor private constructor(private val context: Context) {
                     Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED
             }.getOrDefault(false)
             if (shizukuOk) return true
+            if (com.HanFeng.adblocker.shizuku.SuSession.getInstance().isSessionOpen()) return true
             return runCatching {
-                val session = com.HanFeng.adblocker.shizuku.SuSession.getInstance()
-                session.isSessionOpen() || session.open()
+                com.HanFeng.adblocker.shizuku.SuSession.getInstance().findSuBinary() != null
             }.getOrDefault(false)
         }
 
@@ -131,7 +133,7 @@ class ProcessMonitor private constructor(private val context: Context) {
     val sampleError = _sampleError
 
     private val lastSnapshots = mutableMapOf<Int, ProcSnapshot>()
-    private var samplingJob: kotlinx.coroutines.Job? = null
+    private val modeJobs = mutableMapOf<SamplingMode, kotlinx.coroutines.Job>()
     private val uidPkgCache = mutableMapOf<Int, String>()
 
     /**
@@ -168,13 +170,12 @@ class ProcessMonitor private constructor(private val context: Context) {
      * 启动采样。mode 决定采样策略：
      * - FULL：扫描 /proc/[0-9]* 全部进程，间隔 3s。RunningAppsActivity 使用。
      * - FOREGROUND_ONLY：只采样当前前台 App 1 个 PID，间隔 5s，开销极低。FloatingBallService 使用。
+     * 两种模式各自维护独立 job，互不取消（悬浮球与进程页可同时活跃）。
      */
     fun startSampling(scope: kotlinx.coroutines.CoroutineScope, mode: SamplingMode = SamplingMode.FULL) {
-        // 同模式重复启动直接返回；模式不同则替换为新模式
-        samplingJob?.let { if (it.isActive && currentMode == mode) return else it.cancel() }
-        currentMode = mode
-
-        samplingJob = scope.launch(Dispatchers.IO) {
+        val existing = modeJobs[mode]
+        if (existing?.isActive == true) return
+        modeJobs[mode] = scope.launch(Dispatchers.IO) {
             // Initial sample
             sampleOnce(isFirstSample = true, mode = mode)
 
@@ -195,10 +196,8 @@ class ProcessMonitor private constructor(private val context: Context) {
         }
     }
 
-    fun stopSampling() {
-        samplingJob?.cancel()
-        samplingJob = null
-        // 保留 lastSnapshots 不清，下次启动可继续做差分；但清掉前台专用 trace 避免脏数据
+    fun stopSampling(mode: SamplingMode = SamplingMode.FULL) {
+        modeJobs.remove(mode)?.cancel()
     }
 
     @Volatile private var currentMode: SamplingMode = SamplingMode.FULL

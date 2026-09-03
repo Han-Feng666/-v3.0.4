@@ -977,10 +977,26 @@ object RuleRepository {
                         migrated = true
                         UUID.randomUUID().toString()
                     }
+                    // 存量修复：旧版本导入的简单域名规则 vendor 硬编码为"其它"，
+                    // 加载时按域名重算真实厂商（一次性迁移，重算结果随 migrated 落盘）
+                    val vendor = normalizeVendorName(it.vendor)
+                    val resolvedVendor = if (vendor == DEFAULT_VENDOR && !it.exceptionRule &&
+                        it.regexPattern == null && it.cosmeticSelector == null && it.ipCidr == null
+                    ) {
+                        val classified = classifyVendorSimple(context, it.domain)
+                        if (classified != null && classified != DEFAULT_VENDOR) {
+                            migrated = true
+                            classified
+                        } else {
+                            vendor
+                        }
+                    } else {
+                        vendor
+                    }
                     copyBlockRule(
                         it,
                         id = stableId,
-                        vendor = normalizeVendorName(it.vendor),
+                        vendor = resolvedVendor,
                         source = if (it.source == RuleSource.REFERENCE) RuleSource.IMPORTED else it.source
                     )
                 }
@@ -1888,11 +1904,13 @@ object RuleRepository {
             .mapTo(linkedSetOf()) { it.domain }
     }
 
-    private fun buildCompactImportedRule(domain: String, source: RuleSource, remoteSourceId: String?, rawText: String? = null): BlockRule {
+    private fun buildCompactImportedRule(context: Context, domain: String, source: RuleSource, remoteSourceId: String?, rawText: String? = null): BlockRule {
         return BlockRule(
             id = UUID.randomUUID().toString(),
             domain = domain,
-            vendor = DEFAULT_VENDOR,
+            // 导入时按域名识别厂商并持久化，规则列表按该字段分组展示；
+            // 硬编码 DEFAULT_VENDOR 会让整批导入规则全部归入"其它"
+            vendor = classifyVendorSimple(context, domain) ?: DEFAULT_VENDOR,
             source = source,
             rawText = rawText,
             remoteSourceId = remoteSourceId
@@ -7175,7 +7193,7 @@ object RuleRepository {
         }
 
         fun writeSimpleRule(domain: String, source: RuleSource, remoteSourceId: String?, rawText: String? = null) {
-            writeRule(buildCompactImportedRule(domain, source, remoteSourceId, rawText))
+            writeRule(buildCompactImportedRule(context, domain, source, remoteSourceId, rawText))
         }
     }
 

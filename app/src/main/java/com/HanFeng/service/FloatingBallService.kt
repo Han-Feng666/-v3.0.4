@@ -307,7 +307,7 @@ const val PREFS_NAME = "floating_ball_prefs"
     override fun onDestroy() {
         handler.removeCallbacks(refreshRunnable)
         processMonitorJob?.cancel()
-        ProcessMonitor.getInstance(this).stopSampling()
+        ProcessMonitor.getInstance(this).stopSampling(ProcessMonitor.SamplingMode.FOREGROUND_ONLY)
         removeBall()
         running = false
         super.onDestroy()

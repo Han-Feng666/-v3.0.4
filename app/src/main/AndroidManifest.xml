@@ -171,7 +171,11 @@
         <service
             android:name="com.HanFeng.service.AutoComboFloatingService"
             android:exported="false"
-            android:foregroundServiceType="specialUse" />
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="combo-floating-panel" />
+        </service>
 
         <activity
             android:name="com.HanFeng.ui.RankingDetailActivity"

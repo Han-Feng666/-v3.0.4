@@ -316,7 +316,8 @@ class RulesFragment : Fragment(R.layout.fragment_rules) {
     }
 
     fun onSelectedInPager() {
-        refreshListSoon(0L)
+        // onResume 已触发 refreshList；已加载过时跳过重复刷新，避免切页闪烁
+        if (!rulesLoadedOnce) refreshListSoon(0L)
     }
 
     private fun refreshListDelayed() {
@@ -1095,7 +1096,10 @@ class RulesFragment : Fragment(R.layout.fragment_rules) {
         val selectedSnapshot = selectedIds.toSet()
         val currentSelectionMode = selectionMode
         val query = searchQuery.lowercase()
-        binding.ruleSummary.text = if (rulesLoadedOnce) "刷新中…" else "加载中…"
+        // 仅首次加载显示占位文案；已加载过后静默刷新，避免"已保存 X 条 -> 刷新中… -> 已保存 X 条"文本跳变闪烁
+        if (!rulesLoadedOnce) {
+            binding.ruleSummary.text = "加载中…"
+        }
         viewLifecycleOwner.lifecycleScope.launch {
             val state = runCatching {
                 withContext(Dispatchers.Default) {
@@ -2263,10 +2267,17 @@ class RulesFragment : Fragment(R.layout.fragment_rules) {
     private fun applyBackgroundImage(imageView: ImageView) {
         val ctx = imageView.context.applicationContext
         val customPath = FeatureSettingsRepository.getCustomBackgroundPath(ctx)
+        // 记录已应用的背景源，切页 onResume 重复调用时跳过重解码/重复 IO，消除视觉闪变
+        if (customPath == lastAppliedBackgroundSource && imageView.drawable != null) {
+            return
+        }
+        lastAppliedBackgroundSource = customPath
         if (!customPath.isNullOrEmpty()) {
             imageView.applyCustomFileBackground(customPath)
         } else {
             imageView.applyCustomAssetBackground("custom/background")
         }
     }
+
+    private var lastAppliedBackgroundSource: String? = null
 }

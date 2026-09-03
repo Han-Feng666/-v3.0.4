@@ -175,6 +175,7 @@ class AdBlockVpnService : VpnService() {
     private val dnsResultOut = LinkedBlockingQueue<DnsAsyncResult>(VpnConstants.DNS_ASYNC_RESULT_QUEUE_CAPACITY)
     @Volatile private var dnsWorkerActive = false
     private var dnsWorkerThread: Thread? = null
+    private var dnsWorkerThread2: Thread? = null
 
     private fun startDnsWorker(): Thread {
         val thread = Thread({
@@ -197,6 +198,29 @@ class AdBlockVpnService : VpnService() {
             }
         }, "DnsWorker").apply { isDaemon = true }
         dnsWorkerThread = thread
+        // 第二 worker：单个慢查询（DoH 竞速最长约 1.3s）不再阻塞后续域名解析，
+        // 冷启动批量解析场景下首屏延迟明显降低
+        val thread2 = Thread({
+            android.os.Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND)
+            while (dnsWorkerActive && isRunning) {
+                try {
+                    val task = dnsTaskIn.poll(200, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    if (task != null && task.generation == activeTunGeneration) {
+                        val result = processDnsTaskAsync(task)
+                        if (result != null) {
+                            dnsResultOut.offer(result)
+                        }
+                    }
+                } catch (_: InterruptedException) {
+                    break
+                } catch (error: Exception) {
+                    LogRepository.append(this@AdBlockVpnService,
+                        "DnsWorker2 error: ${error.message ?: error.javaClass.simpleName}")
+                }
+            }
+        }, "DnsWorker2").apply { isDaemon = true }
+        dnsWorkerThread2 = thread2
+        thread2.start()
         return thread
     }
 
@@ -1444,6 +1468,12 @@ class AdBlockVpnService : VpnService() {
         dnsTaskIn.clear()
         dnsResultOut.clear()
         startDnsWorker().start()
+        // 独立 DNS 结果写出协程：Android Q+ TUN 为阻塞读，主循环等包期间
+        // 已就绪的异步 DNS 应答无法写出，客户端要等重传（1-5 秒体感延迟）。
+        // 独立协程按短周期直接经 tunOutputStream 写出，显著降低首屏解析延迟
+        val dnsDrainJob = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            launchDnsResultDrainer(tunGeneration)
+        } else null
         val descriptor = vpnInterface ?: return
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         val wakelockTag = "HanFeng:packet_loop"
@@ -1499,9 +1529,40 @@ class AdBlockVpnService : VpnService() {
         }
         dnsWorkerActive = false
         dnsWorkerThread?.interrupt()
+        dnsWorkerThread2?.interrupt()
         dnsTaskIn.clear()
         dnsResultOut.clear()
+        dnsDrainJob?.cancel()
         releasePacketWakelock()
+    }
+
+    /** 独立 DNS 结果写出协程：不依赖后续数据包到达，10ms 周期 poll 并直接写 TUN */
+    private fun launchDnsResultDrainer(tunGeneration: Long): kotlinx.coroutines.Job {
+        return scope.launch(Dispatchers.IO) {
+            while (isActive && isRunning && tunGeneration == activeTunGeneration) {
+                val drained = drainDnsAsyncResultsToTun(tunGeneration)
+                if (!drained) {
+                    kotlinx.coroutines.delay(10L)
+                }
+            }
+        }
+    }
+
+    /** 把已就绪的异步 DNS 应答直接写 TUN，返回是否有结果被写出 */
+    private fun drainDnsAsyncResultsToTun(tunGeneration: Long): Boolean {
+        var wrote = false
+        while (true) {
+            val result = dnsResultOut.poll() ?: break
+            if (result.generation != tunGeneration) continue
+            val output = tunOutputStream ?: break
+            try {
+                handleDnsAsyncResult(result, output)
+                wrote = true
+            } catch (t: Throwable) {
+                LogRepository.append(this, "DNS drainer write failed: ${t.message ?: t.javaClass.simpleName}")
+            }
+        }
+        return wrote
     }
 
     private fun acquirePacketWakelock(powerManager: PowerManager, tag: String, tunGeneration: Long) {
@@ -1924,6 +1985,10 @@ class AdBlockVpnService : VpnService() {
     private fun looksLikeAdFreeRewardDomain(domain: String): Boolean {
         val lower = domain.trim().lowercase()
         if (lower.isBlank()) return false
+        // 明确的奖励回调单关键词即可命中（reward_/reward- 前缀或 .reward. 片段），放宽双词门槛
+        if (lower.contains("reward") || lower.contains("incentiv")) {
+            return true
+        }
         if (adFreeRewardDomainTokens.any { lower.contains(it) }) return true
         if (!adFreeRewardVendorTokens.any { lower.contains(it) }) return false
         // early-exit 取代 count() >= 2，避免遍历完整个表
@@ -10510,7 +10575,10 @@ class AdBlockVpnService : VpnService() {
             "exp", "experience", "xp",
             "redpacket", "hongbao", "angpao", "lucky",
             "draw", "scratch", "raffle",
-            "sign", "mission", "quest", "challenge", "event"
+            "sign", "mission", "quest", "challenge", "event",
+            // 奖励视频素材/播放链路：激励视频加载不出来通常卡在素材域名被拦
+            "rewardvideo", "incentivevideo", "playable", "endcard",
+            "material", "creative", "videocdn", "rewardcdn"
         )
         private const val TCP_FLAG_FIN = 0x01
         private const val TCP_FLAG_SYN = 0x02

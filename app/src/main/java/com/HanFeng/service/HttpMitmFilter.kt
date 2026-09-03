@@ -1877,7 +1877,18 @@ object HttpMitmFilter {
             contentType.contains("javascript") ||
             contentType.contains("html") ||
             contentType.contains("text")
-        if (contentType.isNotBlank() && !targetedContentType) {
+        // 空 Content-Type 的响应按主机/路径广告倾向做嗅探式检查（与 HTTP/1 对齐），
+        // 部分广告 CDN 端点不返回 Content-Type，直接跳过会漏掉整个信息流
+        if (contentType.isBlank()) {
+            val host = normalizeAuthority(headerInspection.authority)
+            val sniffable = shouldPreferDeepInspection(
+                host = host,
+                path = headerInspection.path,
+                appName = session.appName,
+                requestDomain = extractRequestDomain(headerInspection)
+            )
+            if (!sniffable) return null
+        } else if (!targetedContentType) {
             return null
         }
         val contentEncoding = headerInspection.contentEncoding.orEmpty()

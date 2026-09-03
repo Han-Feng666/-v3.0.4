@@ -292,10 +292,7 @@ btnGameAntiMark = findViewById(R.id.btnGameAntiMark)
         switchStealthRemoveFingerprintHeaders.setOnCheckedChangeListener { _, isChecked ->
             FeatureSettingsRepository.setStealthRemoveFingerprintHeadersEnabled(this, isChecked)
         }
-        switchAdFreeReward.setOnCheckedChangeListener { _, isChecked ->
-            FeatureSettingsRepository.setAdFreeRewardEnabled(this, isChecked)
-            com.HanFeng.core.network.NetworkKernel.reloadIfRunning(this)
-        }
+        switchAdFreeReward.setOnCheckedChangeListener(createAdFreeRewardListener())
 
         refreshCustomBackgroundPreview()
         btnChooseBackground.setOnClickListener {
@@ -311,6 +308,25 @@ btnGameAntiMark = findViewById(R.id.btnGameAntiMark)
             startActivity(Intent(this, WeakNetworkActivity::class.java))
         }
         btnCombo.setOnClickListener {
+            // 无悬浮窗权限时引导去系统设置，避免 enabled 已持久化为开启却看不到悬浮球的状态漂移
+            if (!com.HanFeng.service.AutoComboController.hasOverlayPermission(this)) {
+                StableDialog.builder(this)
+                    .setTitle("需要悬浮窗权限")
+                    .setMessage("自动连招需要悬浮窗权限才能显示悬浮球和操作面板。\n\n请在设置中开启悬浮窗权限。")
+                    .setPositiveButton("去设置") { _, _ ->
+                        runCatching {
+                            startActivity(
+                                Intent(
+                                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    android.net.Uri.parse("package:$packageName")
+                                )
+                            )
+                        }
+                    }
+                    .setNegativeButton("取消", null)
+                    .showSafely(this, "combo-overlay-permission")
+                return@setOnClickListener
+            }
             com.HanFeng.service.AutoComboController.applyState(this, true)
             startActivity(Intent(this, com.HanFeng.ui.AutoComboActivity::class.java))
         }
@@ -672,8 +688,14 @@ syncWeakNetDesc()
         if (switchAdFreeReward.isChecked == enabled) return
         switchAdFreeReward.setOnCheckedChangeListener(null)
         switchAdFreeReward.isChecked = enabled
-        switchAdFreeReward.setOnCheckedChangeListener { _, isChecked ->
+        switchAdFreeReward.setOnCheckedChangeListener(createAdFreeRewardListener())
+    }
+
+    // 开关切换需同步热重载拦截内核才即时生效，onCreate 与 sync 重挂必须复用同一实现
+    private fun createAdFreeRewardListener(): android.widget.CompoundButton.OnCheckedChangeListener {
+        return android.widget.CompoundButton.OnCheckedChangeListener { _, isChecked ->
             FeatureSettingsRepository.setAdFreeRewardEnabled(this, isChecked)
+            com.HanFeng.core.network.NetworkKernel.reloadIfRunning(this)
         }
     }
 
