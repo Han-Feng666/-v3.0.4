@@ -54,6 +54,25 @@ import java.io.File
 
 class SettingsActivity : BaseActivity() {
 
+    // Shizuku 授权成功后要接续执行的动作（由 requestShizukuThen 挂起）
+    private var pendingShizukuAction: (() -> Unit)? = null
+    private val shizukuPermissionListener =
+        rikka.shizuku.Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
+            if (requestCode != ShizukuRepository.REQUEST_CODE) return@OnRequestPermissionResultListener
+            val granted = grantResult == PackageManager.PERMISSION_GRANTED
+            val action = pendingShizukuAction
+            pendingShizukuAction = null
+            lifecycleScope.launch {
+                if (granted) {
+                    withContext(Dispatchers.IO) { warmShizukuServicesBlocking() }
+                    showShortToast("Shizuku 授权成功")
+                    action?.invoke()
+                } else {
+                    showShortToast("Shizuku 授权被拒绝")
+                }
+            }
+        }
+
     private lateinit var switchHideBackground: Switch
     private lateinit var switchStealthMode: Switch
     private lateinit var textStealthDesc: TextView
@@ -142,6 +161,11 @@ private lateinit var btnGameAntiMark: Button
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_settings)
+
+        // 接收 Shizuku 授权结果：授权成功后自动预热增强服务，无需离开当前页
+        runCatching {
+            rikka.shizuku.Shizuku.addRequestPermissionResultListener(shizukuPermissionListener)
+        }
 
         val ivBg = findViewById<android.widget.ImageView>(R.id.ivBackground)
         val bgPath = com.HanFeng.data.FeatureSettingsRepository.getCustomBackgroundPath(this)
@@ -303,7 +327,7 @@ btnGameAntiMark = findViewById(R.id.btnGameAntiMark)
         }
         refreshCustomTrackingPreviews()
         btnShizukuAdControl.setOnClickListener {
-            openShizukuAdControlCatalog()
+            requestShizukuThen { openShizukuAdControlCatalog() }
         }
         btnAppFreeze.setOnClickListener {
             launchActivitySafely(
@@ -438,35 +462,27 @@ btnGameAntiMark = findViewById(R.id.btnGameAntiMark)
         
         // Shizuku 增强功能按钮
         btnHostsEditor.setOnClickListener {
-            if (!ShizukuRepository.isBinderReachable()) {
-                showShortToast("请先授权 Shizuku")
-                return@setOnClickListener
-            }
-            launchActivitySafely(Intent(this, HostsEditorActivity::class.java), failureMessage = "打开 Hosts 编辑失败")
+            requestShizukuThen { launchActivitySafely(Intent(this, HostsEditorActivity::class.java), failureMessage = "打开 Hosts 编辑失败") }
         }
 
         btnNetworkPermission.setOnClickListener {
-            if (!ShizukuRepository.isBinderReachable()) {
-                showShortToast("请先授权 Shizuku")
-                return@setOnClickListener
+            requestShizukuThen {
+                launchActivitySafely(
+                    Intent(this, ShizukuEnhanceAppsActivity::class.java)
+                        .putExtra(ShizukuEnhanceAppsActivity.EXTRA_MODE, ShizukuEnhanceAppsActivity.MODE_NETWORK),
+                    failureMessage = "打开网络权限管理失败"
+                )
             }
-            launchActivitySafely(
-                Intent(this, ShizukuEnhanceAppsActivity::class.java)
-                    .putExtra(ShizukuEnhanceAppsActivity.EXTRA_MODE, ShizukuEnhanceAppsActivity.MODE_NETWORK),
-                failureMessage = "打开网络权限管理失败"
-            )
         }
 
         btnBackgroundRestrict.setOnClickListener {
-            if (!ShizukuRepository.isBinderReachable()) {
-                showShortToast("请先授权 Shizuku")
-                return@setOnClickListener
+            requestShizukuThen {
+                launchActivitySafely(
+                    Intent(this, ShizukuEnhanceAppsActivity::class.java)
+                        .putExtra(ShizukuEnhanceAppsActivity.EXTRA_MODE, ShizukuEnhanceAppsActivity.MODE_BACKGROUND),
+                    failureMessage = "打开后台限制管理失败"
+                )
             }
-            launchActivitySafely(
-                Intent(this, ShizukuEnhanceAppsActivity::class.java)
-                    .putExtra(ShizukuEnhanceAppsActivity.EXTRA_MODE, ShizukuEnhanceAppsActivity.MODE_BACKGROUND),
-                failureMessage = "打开后台限制管理失败"
-            )
         }
 
         btnRootScript.setOnClickListener {
@@ -513,7 +529,87 @@ syncWeakNetDesc()
 
     override fun onDestroy() {
         hotspotStatusJob?.cancel()
+        runCatching {
+            rikka.shizuku.Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener)
+        }
         super.onDestroy()
+    }
+
+    // 点击 Shizuku 功能时的统一入口：已授权直接执行；未授权先走标准引导/主动弹授权框，成功后自动执行
+    private fun requestShizukuThen(onReady: () -> Unit) {
+        if (!AppSettingsRepository.isShizukuEnabled(this)) {
+            StableDialog.builder(this)
+                .setTitle("Shizuku 增强未开启")
+                .setMessage("请先在设置中开启 Shizuku 增强开关，再使用该功能。")
+                .setPositiveButton("我知道了", null)
+                .showSafely(this, "shizuku-enhance-off")
+            return
+        }
+        if (ShizukuRepository.isBinderReachable()) {
+            val granted = runCatching {
+                rikka.shizuku.Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            }.getOrDefault(false)
+            if (granted) {
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) { warmShizukuServicesBlocking() }
+                    onReady()
+                }
+                return
+            }
+            // 未授权：主动拉起系统授权框，结果在 shizukuPermissionListener 中接续
+            pendingShizukuAction = onReady
+            val requested = ShizukuRepository.requestPermission()
+            if (requested) {
+                showShortToast("正在请求 Shizuku 授权")
+            } else {
+                pendingShizukuAction = null
+                showShizukuStartGuide()
+            }
+            return
+        }
+        // 内置 Shizuku server 未运行：尝试 root/内置 starter 自动拉起，失败再引导
+        pendingShizukuAction = onReady
+        lifecycleScope.launch {
+            val started = withContext(Dispatchers.IO) {
+                runCatching { com.HanFeng.adblocker.shizuku.BuiltInShizukuStarter.activateViaRoot() }.isSuccess
+            }
+            if (isFinishing || isDestroyed) return@launch
+            // 给 server 一点启动时间后重新检查 binder
+            val reachable = withContext(Dispatchers.IO) {
+                repeat(10) {
+                    if (ShizukuRepository.isBinderReachable()) return@withContext true
+                    Thread.sleep(300)
+                }
+                ShizukuRepository.isBinderReachable()
+            }
+            if (!reachable) {
+                pendingShizukuAction = null
+                showShizukuStartGuide()
+                return@launch
+            }
+            val granted = runCatching {
+                rikka.shizuku.Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            }.getOrDefault(false)
+            if (granted) {
+                withContext(Dispatchers.IO) { warmShizukuServicesBlocking() }
+                pendingShizukuAction?.invoke()
+                pendingShizukuAction = null
+            } else {
+                val requested = ShizukuRepository.requestPermission()
+                if (!requested) {
+                    pendingShizukuAction = null
+                    showShizukuStartGuide()
+                }
+            }
+        }
+    }
+
+    private fun showShizukuStartGuide() {
+        StableDialog.builder(this)
+            .setTitle("需要启动 Shizuku")
+            .setMessage("Shizuku 服务暂未运行。已 Root 设备可允许 Root 授权后自动启动；也可以通过无线调试启动后再试。")
+            .setPositiveButton("我知道了", null)
+            .showSafely(this, "shizuku-start-guide")
     }
 
     private fun syncHideBackgroundSwitch() {

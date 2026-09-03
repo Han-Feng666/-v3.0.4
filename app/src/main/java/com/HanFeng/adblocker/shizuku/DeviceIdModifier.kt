@@ -10,6 +10,10 @@ class DeviceIdModifier {
         private const val SSAID_FILE = "/data/system/users/0/settings_ssaid.xml"
         private const val BACKUP_FILE = "/data/local/tmp/.hf_deviceid_backup"
         private const val GLOBAL_XML = "/data/system/users/0/settings_global.xml"
+        private const val MODULE_DIR = "/data/adb/modules/hf_device_props"
+        private const val MODULE_PROPS_LIST = "$MODULE_DIR/props.list"
+        private const val PROP_WATCHDOG_DIR = "/data/adb/HanFengPropWatch"
+        private const val PROP_WATCHDOG_PID = "$PROP_WATCHDOG_DIR/watcher.pid"
 
         fun generateRandomAndroidId(): String {
             val chars = "0123456789abcdef"
@@ -362,9 +366,9 @@ class DeviceIdModifier {
             "fi"
         )
 
-        // 3. 写 service.sh (只在不存在时写 — 它与 props.list 解耦, 不需要跟随配置变化更新)
-        // shell 逻辑: 每行 props.list 形如 KEY='value', 直接 read 行 + 截取 KEY/VAL + resetprop
-        // Kotlin raw string 里 ${'$'} = 字面 $ (避免 Kotlin 模板把 $KEY 当变量)
+        // 3. 写 service.sh（每次 upsert 都重写，保证含守护拉起逻辑，与 props.list 解耦）
+        // shell 逻辑: 每行 props.list 形如 KEY='value', 直接 read 行 + 截取 KEY/VAL + resetprop；
+        // 结尾拉起 prop 守护（nohup 幂等），开机后 RIL/modem 覆盖 prop 时由守护周期恢复
         val D = "${'$'}"
         val serviceScript = buildString {
             appendLine("#!/system/bin/sh")
@@ -384,16 +388,28 @@ class DeviceIdModifier {
             appendLine("  [ -n \"").append(D).append("KEY\" ] || continue")
             appendLine("  resetprop \"").append(D).append("KEY\" \"").append(D).append("VAL\" 2>/dev/null || setprop \"").append(D).append("KEY\" \"").append(D).append("VAL\" 2>/dev/null || true")
             appendLine("done < \"").append(D).append("PL\"")
+            appendLine("# 拉起常驻守护: RIL/modem 回读覆盖 prop 后周期恢复（幂等, 存活则跳过）")
+            appendLine("WD=/data/adb/HanFengPropWatch")
+            appendLine("mkdir -p \"").append(D).append("WD\"")
+            appendLine("if [ -f \"").append(D).append("WD/watcher.pid\" ]; then")
+            appendLine("  OLDPID=`cat \"").append(D).append("WD/watcher.pid\" 2>/dev/null`")
+            appendLine("  if [ -n \"").append(D).append("OLDPID\" ] && kill -0 \"").append(D).append("OLDPID\" 2>/dev/null; then")
+            appendLine("    exit 0")
+            appendLine("  fi")
+            appendLine("  rm -f \"").append(D).append("WD/watcher.pid\"")
+            appendLine("fi")
+            appendLine("if [ -f \"").append(D).append("WD/watcher.sh\" ]; then")
+            appendLine("  nohup sh \"").append(D).append("WD/watcher.sh\" >/dev/null 2>&1 &")
+            appendLine("  echo `").append(D).append("!` > \"").append(D).append("WD/watcher.pid\"")
+            appendLine("fi")
         }.trimEnd()
         // 注意 service.sh 内含 $ 变量 - 用 'EOF' (quoted heredoc) 让 shell 不解析 $, 文件按宇面写入
         cmds.add(
-            "if [ ! -f '$moduleDir/service.sh' ]; then " +
-                "cat > '$moduleDir/service.sh' << 'SS_EOF'\n" +
+            "cat > '$moduleDir/service.sh' << 'SS_EOF'\n" +
                 serviceScript +
                 "\nSS_EOF\n" +
                 "chmod 755 '$moduleDir/service.sh'; " +
-                "chcon u:object_r:system_file:s0 '$moduleDir/service.sh' 2>/dev/null || true; " +
-            "fi"
+                "chcon u:object_r:system_file:s0 '$moduleDir/service.sh' 2>/dev/null || true; "
         )
 
         // 4. 创建空 props.list (如不存在)
@@ -432,7 +448,10 @@ class DeviceIdModifier {
 
         cmds.add("echo 'UPSERT_OK'")
         val r = runRootShell(cmds.joinToString("\n"))
-        return r.exitCode == 0 || r.output.contains("UPSERT_OK")
+        val ok = r.exitCode == 0 || r.output.contains("UPSERT_OK")
+        // 写入成功后确保守护在跑，防止 RIL/modem 重启把 prop 回读覆盖
+        if (ok) ensurePropWatchdog()
+        return ok
     }
 
     /**
@@ -458,7 +477,18 @@ class DeviceIdModifier {
         )
         cmds.add("echo 'REMOVE_OK'")
         val r = runRootShell(cmds.joinToString("\n"))
-        return r.exitCode == 0 || r.output.contains("REMOVE_OK")
+        val ok = r.exitCode == 0 || r.output.contains("REMOVE_OK")
+        // props 清空时（removeModuleProps 会 disable module）同步停掉守护
+        if (ok && propKeys.size > 0) {
+            val empty = runRootShell(
+                "if [ -f '$MODULE_PROPS_LIST' ]; then grep -v '^[[:space:]]*\$\\|^[[:space:]]*#' '$MODULE_PROPS_LIST' 2>/dev/null | head -n 1; fi; echo 'CHECK_DONE'"
+            )
+            val hasContent = empty.output.lineSequence()
+                .filter { it.isNotBlank() && it != "CHECK_DONE" }
+                .any()
+            if (!hasContent) stopPropWatchdog()
+        }
+        return ok
     }
 
     /**
@@ -474,7 +504,81 @@ class DeviceIdModifier {
             "rm -f '$moduleDir/props.list'; " +
             "fi")
         cmds.add("echo 'CLEAR_OK'")
+        stopPropWatchdog()
         return runRootShell(cmds.joinToString("\n"))
+    }
+
+    // ==================== prop 守护 ====================
+    // RIL/modem 进程重启会从 NV 回读并覆盖 IMEI/SN/序列号等 prop，
+    // 模块 service.sh 只在开机跑一次，被覆盖后无人恢复导致"改了又变回去"。
+    // 守护脚本按 Root 守护脚本模式运行：JVM 仅作 launcher，nohup 常驻，PID 落盘。
+
+    /** 确保 prop 守护在运行：写入脚本并按 PID 文件幂等启动 */
+    private fun ensurePropWatchdog() {
+        val D = "${'$'}"
+        // 按记忆约定：Kotlin 字符串内 shell 的 $ 一律用 ${'$'} 注入，禁止 \$ 转义
+        val stripHead = "${D}{VAL#'}"
+        val stripTail = "${D}{VAL%'}"
+        val script = buildString {
+            appendLine("#!/system/bin/sh")
+            appendLine("# HanFeng prop watchdog - reapply props.list periodically")
+            appendLine("PL=/data/adb/modules/hf_device_props/props.list")
+            appendLine("RP=")
+            appendLine("if command -v resetprop >/dev/null 2>&1; then RP=resetprop")
+            appendLine("elif [ -x /data/adb/ksu/bin/resetprop ]; then RP=/data/adb/ksu/bin/resetprop")
+            appendLine("elif [ -x /data/adb/ap/bin/resetprop ]; then RP=/data/adb/ap/bin/resetprop")
+            appendLine("elif [ -x /data/adb/magisk/resetprop ]; then RP=/data/adb/magisk/resetprop")
+            appendLine("fi")
+            appendLine("while true; do")
+            appendLine("  if [ -r \"${D}PL\" ]; then")
+            appendLine("    while IFS= read -r line; do")
+            appendLine("      case \"${D}line\" in ''|\\#*) continue ;; esac")
+            appendLine("      KEY=\"${D}{line%%=*}\"")
+            appendLine("      VAL=\"${D}{line#*=}\"")
+            appendLine("      VAL=\"${stripHead}\"")
+            appendLine("      VAL=\"${stripTail}\"")
+            appendLine("      [ -n \"${D}KEY\" ] || continue")
+            appendLine("      CUR=`getprop \"${D}KEY\" 2>/dev/null`")
+            appendLine("      if [ \"${D}CUR\" != \"${D}VAL\" ]; then")
+            appendLine("        if [ -n \"${D}RP\" ]; then \"${D}RP\" \"${D}KEY\" \"${D}VAL\" 2>/dev/null; else setprop \"${D}KEY\" \"${D}VAL\" 2>/dev/null; fi")
+            appendLine("      fi")
+            appendLine("    done < \"${D}PL\"")
+            appendLine("  fi")
+            appendLine("  sleep 30")
+            appendLine("done")
+        }.trimEnd()
+        val cmds = mutableListOf<String>()
+        cmds.add("mkdir -p '$PROP_WATCHDOG_DIR'")
+        cmds.add(
+            "cat > '$PROP_WATCHDOG_DIR/watcher.sh' << 'HF_W_EOF'\n" +
+                script +
+                "\nHF_W_EOF"
+        )
+        cmds.add("chmod 755 '$PROP_WATCHDOG_DIR/watcher.sh'")
+        // 幂等启动：旧守护存活则跳过；否则清理残留 PID 后 nohup 拉起
+        cmds.add(
+            "if [ -f '$PROP_WATCHDOG_PID' ]; then " +
+                "OLDPID=`cat '$PROP_WATCHDOG_PID' 2>/dev/null`; " +
+                "if [ -n \"${D}OLDPID\" ] && kill -0 \"${D}OLDPID\" 2>/dev/null; then echo 'WATCHDOG_ALREADY'; exit 0; fi; " +
+                "rm -f '$PROP_WATCHDOG_PID'; " +
+            "fi; " +
+            "nohup sh '$PROP_WATCHDOG_DIR/watcher.sh' >/dev/null 2>&1 & " +
+            "echo `${D}!` > '$PROP_WATCHDOG_PID'; " +
+            "echo 'WATCHDOG_STARTED'"
+        )
+        val r = runRootShell(cmds.joinToString("\n"))
+        Log.i(TAG, "prop watchdog ensure: rc=${r.exitCode} out=${r.output.take(60)}")
+    }
+
+    /** 停止 prop 守护（恢复默认时调用） */
+    private fun stopPropWatchdog() {
+        runRootShell(
+            "if [ -f '$PROP_WATCHDOG_PID' ]; then " +
+                "OLDPID=`cat '$PROP_WATCHDOG_PID' 2>/dev/null`; " +
+                "[ -n \"\${OLDPID}\" ] && kill \"\${OLDPID}\" 2>/dev/null; " +
+                "rm -f '$PROP_WATCHDOG_PID'; " +
+            "fi; echo 'WATCHDOG_STOPPED'"
+        )
     }
 
     data class DeviceIdSnapshot(
@@ -567,7 +671,7 @@ class DeviceIdModifier {
             "aid=\$(content query --uri content://settings/secure --projection value --where \"name='android_id'\" 2>/dev/null | sed -n 's/.*value=//p'); " +
             "fi; " +
             "if [ -z \"\${aid}\" ] && [ -f '" + SSAID_FILE + "' ]; then " +
-            "aid=\$(sed -n 's/.*value=\"\\([^\"]*\\)\".*/\\1/p' '" + SSAID_FILE + "' 2>/dev/null); " +
+            "aid=\$(sed -n 's/.*value=\"\\([^\"]*\\)\".*/\\1/p' '" + SSAID_FILE + "' 2>/dev/null | head -n 1); " +
             "fi; " +
             "[ -n \"\${aid}\" ] && echo \"\${aid}\" || echo 'none'"
         )
@@ -575,6 +679,24 @@ class DeviceIdModifier {
             return ShellResult(-1, "无法读取 Android ID")
         }
         return raw
+    }
+
+    /**
+     * Android 8+ 各 App 实际读到的是按包名隔离的 SSAID（settings_ssaid.xml），
+     * 全局 secure.android_id 只对系统进程生效。
+     * 这里重写全部 App 级条目（带 package= 的 setting 行）的 value，让目标 App 下次读取即拿到新 ID。
+     */
+    private fun androidIdSsaidRewriteCmds(newId: String): List<String> {
+        // newId 已校验为纯十六进制，sed 替换串安全；仅替换带 package= 的 App 级条目
+        return listOf(
+            "if [ -f '" + SSAID_FILE + "' ]; then " +
+                "cp '" + SSAID_FILE + "' '" + SSAID_FILE + ".hf_bak' 2>/dev/null; " +
+                "sed -i '/<setting/{/package=/s/value=\"[0-9a-fA-F]*\"/value=\"$newId\"/g;}' '" + SSAID_FILE + "' 2>/dev/null; " +
+                "chmod 660 '" + SSAID_FILE + "' 2>/dev/null; " +
+                "chown system:system '" + SSAID_FILE + "' 2>/dev/null; " +
+                "restorecon '" + SSAID_FILE + "' 2>/dev/null; " +
+                "fi"
+        )
     }
 
     fun writeAndroidId(newId: String): ShellResult {
@@ -595,21 +717,33 @@ class DeviceIdModifier {
             "done"
         )
 
+        // 全局兜底行（老机型 SSAID 文件中的 android_id 条目）
         val escapedId = escapeSedValue(newId)
         cmds.add("if [ -f '" + SSAID_FILE + "' ]; then sed -i 's|\\(setting.*name=\"android_id\"[^v]*value=\"\\)[^\"]*\\(.*\\)|\\1$escapedId\\2|' '" + SSAID_FILE + "' 2>/dev/null; fi")
 
+        // Android 8+ 关键路径：重写所有 App 级 SSAID 条目，否则目标 App 读到的仍是旧 ID
+        cmds.addAll(androidIdSsaidRewriteCmds(newId))
+
         cmds.add("killall com.android.providers.settings 2>/dev/null || true")
+        cmds.add("am force-stop com.android.providers.settings 2>/dev/null || true")
         cmds.add("sleep 1")
         cmds.add("echo 'DONE'")
 
         val result = runRootShell(cmds.joinToString(" ; "))
 
-        val verify = readAndroidId()
-        if (verify.output != newId) {
+        // 验证以 App 级 SSAID 为准（各 App 实际读取的值）
+        val verifySsaid = runRootShell(
+            "v=''; " +
+            "if [ -f '" + SSAID_FILE + "' ]; then " +
+            "v=\$(sed -n 's/.*package=\"[^\"]*\"[^>]*value=\"\\([^\"]*\\)\".*/\\1/p' '" + SSAID_FILE + "' 2>/dev/null | head -n 1); " +
+            "fi; " +
+            "[ -n \"\${v}\" ] && echo \"\${v}\" || echo 'none'"
+        )
+        if (verifySsaid.output.trim() != newId) {
             val diag = buildString {
                 appendLine("Android ID 写入后验证失败")
                 appendLine("期望: $newId")
-                appendLine("实际: ${verify.output}")
+                appendLine("SSAID 实际: ${verifySsaid.output.trim()}")
                 appendLine("root 会话: ${if (SuSession.getInstance().isSessionOpen()) "已授权" else "未授权"}")
                 appendLine("")
                 appendLine(DeviceIdModifier.diagnoseRootEnvironment())
