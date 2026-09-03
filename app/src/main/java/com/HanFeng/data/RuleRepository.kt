@@ -1120,16 +1120,17 @@ object RuleRepository {
         }
         synchronized(cacheLock) {
             cachedBlockedDomains = emptySet()
+            // important 语义与 isBlocked 检查顺序一致：$important 优先于普通例外规则，不参与例外扣减
             cachedSimpleDomainIndex = SimpleDomainIndex(
                 blocked = (blocked - exceptions) + userOwnedBlocked,
                 userOwnedBlocked = userOwnedBlocked,
-                importantBlocked = importantBlocked - exceptions,
+                importantBlocked = importantBlocked,
                 exceptions = exceptions
             )
             cachedTrieIndex = DomainTrieIndex(
                 blocked = (blocked - exceptions) + userOwnedBlocked,
                 userOwnedBlocked = userOwnedBlocked,
-                importantBlocked = importantBlocked - exceptions,
+                importantBlocked = importantBlocked,
                 exceptions = exceptions
             )
             cachedRuleMap = nonSimpleRules.groupBy { it.domain }
@@ -1152,12 +1153,12 @@ object RuleRepository {
                 allBlockedDomains.forEach { cachedBloomFilter?.put(it) }
             }
 
-            // 预编译正则表达式
+            // 预编译正则表达式（与 matchesRegexRule 懒编译保持一致：CASE_INSENSITIVE）
             val compiledRegexMap = ConcurrentHashMap<String, java.util.regex.Pattern>()
             regexRules.forEach { rule ->
                 rule.regexPattern?.let { pattern ->
                     runCatching {
-                        compiledRegexMap[pattern] = java.util.regex.Pattern.compile(pattern)
+                        compiledRegexMap[pattern] = java.util.regex.Pattern.compile(pattern, java.util.regex.Pattern.CASE_INSENSITIVE)
                     }
                 }
             }
@@ -1906,9 +1907,11 @@ object RuleRepository {
         val directDomainLine = normalizedLine
 
         if (directDomainLine.startsWith("||")) {
-            val domainPart = directDomainLine.removePrefix("||")
+            val body = directDomainLine.removePrefix("||")
+            // 带路径的规则（||domain/path^）不允许降级成整域拦截，交给完整解析保留 pathPattern
+            if (body.contains('/')) return null
+            val domainPart = body
                 .substringBefore('^')
-                .substringBefore('/')
                 .trim()
             return sanitizeDomain(normalizeDomainToken(domainPart))
         }
@@ -2572,6 +2575,8 @@ object RuleRepository {
             .flatMap { candidate -> getFilteredRulesForApp(context, candidate, appName).asSequence() }
             .filter {
                 it.source != RuleSource.UNSUPPORTED &&
+                // 带路径/关键词模式的 URL 级规则在 DNS 查询层语义不完整，不参与整域拦截
+                it.pathPattern == null && it.keywordPattern == null &&
                 ruleMatches(it, qType, appName) &&
                     matchesPortScope(it.destinationPorts, destinationPort, it.destinationPortRanges) &&
                     matchesPortScope(it.sourcePorts, sourcePort, it.sourcePortRanges)
@@ -3090,6 +3095,8 @@ object RuleRepository {
             .flatMap { candidate -> getFilteredRulesForApp(context, candidate, appName).asSequence() }
             .filter {
                 it.source != RuleSource.UNSUPPORTED &&
+                    // 带路径/关键词模式的 URL 级规则在 DNS 查询层语义不完整，不参与整域拦截
+                    it.pathPattern == null && it.keywordPattern == null &&
                     ruleMatches(it, qType, appName) &&
                     !it.exceptionRule &&
                     matchesPortScope(it.destinationPorts, destinationPort, it.destinationPortRanges) &&
@@ -4834,7 +4841,9 @@ object RuleRepository {
         val prefix = if (isException) "@@||" else "||"
         if (!line.startsWith(prefix)) return null
         val body = line.removePrefix(prefix)
-        val domainPart = body.substringBefore('^').substringBefore('/').substringBefore('$').trim()
+        // 带路径的规则不允许在 fast path 降级成整域规则，交给完整解析保留 pathPattern
+        if (body.contains('/')) return null
+        val domainPart = body.substringBefore('^').substringBefore('$').trim()
         val domain = sanitizeDomain(normalizeDomainToken(domainPart)) ?: return null
         val modifierPart = line.substringAfter('$', missingDelimiterValue = "")
         if (modifierPart.isNotBlank()) {
@@ -4858,6 +4867,8 @@ object RuleRepository {
         if (parts.size < 2) return null
         val ip = parts[0]
         if (ip != "0.0.0.0" && ip != "127.0.0.1" && ip != "::" && ip != "::1") return null
+        // 一行多域名（0.0.0.0 a.com b.com）交给完整解析路径逐个提取，避免静默丢域名
+        if (parts.size > 2) return null
         val domain = sanitizeDomain(normalizeDomainToken(parts[1])) ?: return null
         return ParsedRule(domain = domain, isException = false, vendorHints = lineContext.vendorHints)
     }
@@ -5356,21 +5367,20 @@ object RuleRepository {
         val trimmed = line.trim()
         if (!trimmed.startsWith("/")) return null
         // 支持 ABP 高级正则规则: /regex/$domain=...,important 或 /regex/$subdocument
-        // 切出 $ 之前的 /regex/ 部分,之后的 modifier 交给 parseModifierInfo
-        val dollarIndex = trimmed.indexOf('$')
-        val regexWithModifiers = if (dollarIndex > 0) {
-            val beforeDollar = trimmed.substring(0, dollarIndex).trim()
-            val afterDollar = trimmed.substring(dollarIndex + 1).trim()
-            if (!beforeDollar.endsWith("/")) return null
-            beforeDollar to afterDollar.takeIf { it.isNotBlank() }
-        } else {
-            if (!trimmed.endsWith("/")) return null
-            trimmed to null
-        }
-        val (patternWithSlashes, modifierPart) = regexWithModifiers
-        val body = patternWithSlashes.removePrefix("/").removeSuffix("/").trim()
+        // $ 修饰符分界取最后一个 '/' 之后的段：正则体内常含行尾锚 $（如 /ads?$/），
+        // 用 indexOf 会把正则体内的 $ 误判为修饰符起点导致整条规则被丢弃
+        val lastSlash = trimmed.lastIndexOf('/')
+        if (lastSlash <= 0) return null
+        val regexPart = trimmed.substring(0, lastSlash + 1)
+        val modifierPartRaw = trimmed.substring(lastSlash + 1).trim()
+        if (!regexPart.startsWith("/")) return null
+        // 修饰符段必须长得像 modifier 列表（字母/数字/=-,.~），否则视为非法规则
+        val afterDollar = if (modifierPartRaw.startsWith("$")) modifierPartRaw.substring(1).trim() else ""
+        if (modifierPartRaw.isNotEmpty() && !modifierPartRaw.startsWith("$")) return null
+        if (afterDollar.isNotEmpty() && !afterDollar.matches(Regex("[A-Za-z0-9=_,.~\\-| ]+"))) return null
+        val body = regexPart.removePrefix("/").removeSuffix("/").trim()
         if (body.isBlank()) return null
-        val modifierInfo = parseModifierInfo(modifierPart)
+        val modifierInfo = parseModifierInfo(afterDollar.takeIf { it.isNotBlank() })
         if (modifierInfo.invalid || modifierInfo.unsupportedModifiers.isNotEmpty()) return null
         return ParsedRule(
             domain = extractRegexRuleDomain(body) ?: REGEX_RULE_DOMAIN,
@@ -5762,26 +5772,25 @@ object RuleRepository {
     private fun parseHostsRule(line: String): List<ParsedRule>? {
         val trimmed = line.trim()
         if (trimmed.startsWith("#") || trimmed.startsWith("!")) return null
-        
-        // IPv4 Hosts 格式：0.0.0.0 example.com, 127.0.0.1 example.com
-        val ipv4Pattern = """^(?:0\.0\.0\.0|127\.0\.0\.1)\s+(\S+)""".toRegex()
-        ipv4Pattern.find(trimmed)?.let { match ->
-            val domain = match.groupValues[1]
-            if (domain.equals("localhost", ignoreCase = true)) return null
-            val sanitized = sanitizeDomain(domain) ?: return null
-            return listOf(ParsedRule(domain = sanitized, isException = false))
+
+        // IPv4/IPv6 Hosts 格式，标准允许一行跟多个域名：0.0.0.0 a.com b.com c.com
+        val tokens = trimmed.split(splitWhitespaceRegex).filter { it.isNotBlank() }
+        if (tokens.size < 2) return null
+        val ip = tokens[0]
+        val isKnownBlockIp = ip == "0.0.0.0" || ip == "127.0.0.1" || ip == "::" || ip == "::1"
+        if (!isKnownBlockIp) {
+            // 其他 IPv4/IPv6 地址也按 hosts 行处理
+            val isIpShape = ip.count { it == '.' } == 3 || ip.contains(':')
+            if (!isIpShape) return null
         }
-        
-        // IPv6 Hosts 格式：::1 example.com, :: localhost
-        val ipv6Pattern = """^(?:::+[0-9a-fA-F]*|[0-9a-fA-F]+(?::[0-9a-fA-F]*){2,})\s+(\S+)""".toRegex()
-        ipv6Pattern.find(trimmed)?.let { match ->
-            val domain = match.groupValues[1]
-            if (domain.equals("localhost", ignoreCase = true)) return null
-            val sanitized = sanitizeDomain(domain) ?: return null
-            return listOf(ParsedRule(domain = sanitized, isException = false))
+        val rules = mutableListOf<ParsedRule>()
+        for (token in tokens.drop(1)) {
+            if (token.startsWith("#")) break
+            if (token.equals("localhost", ignoreCase = true)) continue
+            val sanitized = sanitizeDomain(normalizeDomainToken(token)) ?: continue
+            rules += ParsedRule(domain = sanitized, isException = false)
         }
-        
-        return null
+        return if (rules.isEmpty()) null else rules
     }
 
     private fun parseDnsmasqRule(line: String): List<ParsedRule>? {
@@ -6972,13 +6981,13 @@ object RuleRepository {
             cachedSimpleDomainIndex = SimpleDomainIndex(
                 blocked = (blocked - exceptions) + userOwnedBlocked,
                 userOwnedBlocked = userOwnedBlocked,
-                importantBlocked = importantBlocked - exceptions,
+                importantBlocked = importantBlocked,
                 exceptions = exceptions
             )
             cachedTrieIndex = DomainTrieIndex(
                 blocked = (blocked - exceptions) + userOwnedBlocked,
                 userOwnedBlocked = userOwnedBlocked,
-                importantBlocked = importantBlocked - exceptions,
+                importantBlocked = importantBlocked,
                 exceptions = exceptions
             )
             val nonSimpleRules = rules.asSequence()
@@ -7302,9 +7311,13 @@ object RuleRepository {
         synchronized(cacheLock) {
             val index = cachedSimpleDomainIndex
             if (index != null && newDomains.isNotEmpty()) {
+                // 只有用户手动添加的规则才享有 userOwned 特权（覆盖例外/保护域），
+                // 远程订阅规则保持原有归属，避免追加态与重启态行为不一致
+                val appendedUserOwned = newRules.filter { !it.exceptionRule && isUserOwnedBlockingRule(it) }
+                    .mapTo(linkedSetOf()) { it.domain }
                 val updated = index.copy(
                     blocked = index.blocked + newDomains,
-                    userOwnedBlocked = index.userOwnedBlocked + newDomains
+                    userOwnedBlocked = index.userOwnedBlocked + appendedUserOwned
                 )
                 cachedSimpleDomainIndex = updated
                 cachedTrieIndex = DomainTrieIndex(
@@ -7320,6 +7333,24 @@ object RuleRepository {
                     cachedRules = current + newRules
                 }
             }
+            // BloomFilter 增量补入新域名，避免追加规则被预筛选误否决导致新规则不生效
+            if (newDomains.isNotEmpty()) {
+                val bloom = cachedBloomFilter
+                if (bloom != null) {
+                    newDomains.forEach { bloom.put(it) }
+                }
+            }
+            // 依赖全量构建的惰性缓存全部置空，下一次查询时按需重建，
+            // 保证追加的非简单规则（regex/keyword/CNAME/带修饰符）立即参与决策
+            cachedRuleMap = null
+            cachedUniversalRuleMap = null
+            cachedAppRuleIndex = null
+            cachedCnameRuleIndex = null
+            cachedRegexRules = null
+            cachedKeywordRules = null
+            cachedCombinedKeywordPattern = null
+            cachedRegexLiteralIndex = null
+            cachedCompiledRegexRules.clear()
             cachedRuleCount = null
             cachedWhitelistHits.clear()
             cachedGeneralAdTrafficHits.clear()
@@ -7741,6 +7772,7 @@ object RuleRepository {
     }
 
     private fun updateRuleCache(rules: List<BlockRule>) {
+        synchronized(cacheLock) {
         cachedRules = rules
         cachedBlockedDomains = null
         val blocked = linkedSetOf<String>()
@@ -7758,16 +7790,17 @@ object RuleRepository {
                     if (isImportantBlockingRule(rule)) importantBlocked += rule.domain
                 }
             }
+        // important 语义与 isBlocked 检查顺序一致：$important 优先于普通例外规则，不参与例外扣减
         cachedSimpleDomainIndex = SimpleDomainIndex(
             blocked = (blocked - exceptions) + userOwnedBlocked,
             userOwnedBlocked = userOwnedBlocked,
-            importantBlocked = importantBlocked - exceptions,
+            importantBlocked = importantBlocked,
             exceptions = exceptions
         )
         cachedTrieIndex = DomainTrieIndex(
             blocked = (blocked - exceptions) + userOwnedBlocked,
             userOwnedBlocked = userOwnedBlocked,
-            importantBlocked = importantBlocked - exceptions,
+            importantBlocked = importantBlocked,
             exceptions = exceptions
         )
         cachedRuleMap = null
@@ -7784,6 +7817,8 @@ object RuleRepository {
         cachedAppRuleIndex = null
         cachedUniversalRuleMap = null
         cachedCnameRuleIndex = null
+        cachedRuleMatchHits.clear(); cachedRequestDirectives.clear()
+        }
     }
 
     private fun ruleMatches(

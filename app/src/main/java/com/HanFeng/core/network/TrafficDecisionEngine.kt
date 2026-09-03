@@ -14,8 +14,10 @@ object TrafficDecisionEngine {
 
     private val quicBlockedCidrs = mutableSetOf<String>()
     private val quicCidrHitCounts = mutableMapOf<String, Int>()
+    private val quicBlockedCidrExpiry = mutableMapOf<String, Long>()
     private const val CIDR_HIT_THRESHOLD = 3
     private const val CIDR_EXPIRE_MILLIS = 3600_000L
+    private const val KEY_QUIC_CIDR_EXPIRY = "quic_cidr_expiry"
     private var cidrLastPrune = 0L
     private var prefs: SharedPreferences? = null
 
@@ -26,11 +28,29 @@ object TrafficDecisionEngine {
 
     private fun loadPersistedState() {
         val prefs = prefs ?: return
+        val now = System.currentTimeMillis()
         val cidrsStr = prefs.getString(KEY_QUIC_BLOCKED_CIDRS, null) ?: return
         if (cidrsStr.isBlank()) return
         synchronized(quicBlockedCidrs) {
             quicBlockedCidrs.clear()
             cidrsStr.split(",").filter { it.isNotBlank() }.forEach { quicBlockedCidrs.add(it) }
+        }
+        // 历史数据无时间戳时统一给一个新周期，之后按过期时间正常淘汰
+        val expiryStr = prefs.getString(KEY_QUIC_CIDR_EXPIRY, null)
+        synchronized(quicBlockedCidrExpiry) {
+            quicBlockedCidrExpiry.clear()
+            expiryStr?.split(",")?.forEach { entry ->
+                val parts = entry.split("=")
+                if (parts.size == 2) {
+                    val expiresAt = parts[1].toLongOrNull()
+                    if (expiresAt != null) quicBlockedCidrExpiry[parts[0]] = expiresAt
+                }
+            }
+            quicBlockedCidrs.forEach { cidr ->
+                if (quicBlockedCidrExpiry[cidr] == null || quicBlockedCidrExpiry[cidr]!! <= now) {
+                    quicBlockedCidrExpiry[cidr] = now + CIDR_EXPIRE_MILLIS
+                }
+            }
         }
         val hitCountsStr = prefs.getString(KEY_QUIC_CIDR_HIT_COUNTS, null)
         if (!hitCountsStr.isNullOrBlank()) {
@@ -51,6 +71,9 @@ object TrafficDecisionEngine {
         val editor = prefs?.edit() ?: return
         synchronized(quicBlockedCidrs) {
             editor.putString(KEY_QUIC_BLOCKED_CIDRS, quicBlockedCidrs.joinToString(","))
+        }
+        synchronized(quicBlockedCidrExpiry) {
+            editor.putString(KEY_QUIC_CIDR_EXPIRY, quicBlockedCidrExpiry.map { "${it.key}=${it.value}" }.joinToString(","))
         }
         synchronized(quicCidrHitCounts) {
             editor.putString(KEY_QUIC_CIDR_HIT_COUNTS, quicCidrHitCounts.map { "${it.key}=${it.value}" }.joinToString(","))
@@ -278,6 +301,9 @@ object TrafficDecisionEngine {
             quicCidrHitCounts[cidr] = count
             if (count >= CIDR_HIT_THRESHOLD) {
                 synchronized(quicBlockedCidrs) { quicBlockedCidrs.add(cidr) }
+                synchronized(quicBlockedCidrExpiry) {
+                    quicBlockedCidrExpiry[cidr] = System.currentTimeMillis() + CIDR_EXPIRE_MILLIS
+                }
                 quicCidrHitCounts.remove(cidr)
                 savePersistedState()
             }
@@ -299,12 +325,23 @@ object TrafficDecisionEngine {
     private fun pruneCidrsIfNeeded() {
         val now = System.currentTimeMillis()
         if (now - cidrLastPrune < 600_000L) return
+        var changed = false
+        synchronized(quicBlockedCidrExpiry) {
+            val expired = quicBlockedCidrExpiry.filterValues { it <= now }.keys.toList()
+            if (expired.isNotEmpty()) {
+                synchronized(quicBlockedCidrs) { quicBlockedCidrs.removeAll(expired) }
+                expired.forEach { quicBlockedCidrExpiry.remove(it) }
+                changed = true
+            }
+        }
         cidrLastPrune = now
+        if (changed) savePersistedState()
     }
 
     fun resetQuicCidrState() {
         synchronized(quicBlockedCidrs) { quicBlockedCidrs.clear() }
         synchronized(quicCidrHitCounts) { quicCidrHitCounts.clear() }
+        synchronized(quicBlockedCidrExpiry) { quicBlockedCidrExpiry.clear() }
         cidrLastPrune = 0L
         prefs?.edit()?.clear()?.apply()
     }

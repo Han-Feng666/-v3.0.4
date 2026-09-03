@@ -52,8 +52,12 @@ object SniInterceptor {
             return SniBlockDecision(false, sniHost, "", "empty-sni")
         }
 
+        // 缓存键必须包含 appName 与 isProtectedDomain：决策依赖 App 上下文（小说强拦、保护域），
+        // 否则先到的 App 的结论会在 TTL 内扩散到其它 App，造成误拦/漏拦
+        val cacheKey = "$sniHost|$appName|$isProtectedDomain"
+
         synchronized(sniCacheLock) {
-            sniCache[sniHost]?.let { cached ->
+            sniCache[cacheKey]?.let { cached ->
                 if (System.currentTimeMillis() - cached.timestamp < SNI_CACHE_TTL_MS) {
                     return cached.decision
                 }
@@ -65,7 +69,7 @@ object SniInterceptor {
         // 域名快速排除：社交核心 / 白名单（在这两步命中时不需要 vendor 分类）
         if (RuleRepository.isSocialCoreDomain(sniHost)) {
             return makeDecision(false, sniHost, "", "social-core").also {
-                cacheDecision(sniHost, it)
+                cacheDecision(cacheKey, it)
                 recordSlowPathLatency(slowPathStartedAt)
             }
         }
@@ -75,28 +79,28 @@ object SniInterceptor {
         if (userOwnedMatch != null && !userOwnedMatch.exceptionRule && RuleRepository.isUserOwnedRule(userOwnedMatch)) {
             val vendor = userOwnedMatch.vendor.ifBlank { RuleRepository.classifyVendorSimple(context, sniHost) ?: "" }
             return makeDecision(true, sniHost, vendor, "rule-match:${userOwnedMatch.source.name.lowercase()}").also {
-                cacheDecision(sniHost, it)
+                cacheDecision(cacheKey, it)
                 recordSlowPathLatency(slowPathStartedAt)
             }
         }
 
         if (isProtectedDomain) {
             return makeDecision(false, sniHost, "", "protected-domain").also {
-                cacheDecision(sniHost, it)
+                cacheDecision(cacheKey, it)
                 recordSlowPathLatency(slowPathStartedAt)
             }
         }
 
         if (RuleRepository.isWhitelistedDomain(sniHost)) {
             return makeDecision(false, sniHost, "", "whitelisted").also {
-                cacheDecision(sniHost, it)
+                cacheDecision(cacheKey, it)
                 recordSlowPathLatency(slowPathStartedAt)
             }
         }
 
         if (RuleRepository.isSensitiveAuthDomain(sniHost)) {
             return makeDecision(false, sniHost, "", "sensitive-auth").also {
-                cacheDecision(sniHost, it)
+                cacheDecision(cacheKey, it)
                 recordSlowPathLatency(slowPathStartedAt)
             }
         }
@@ -104,7 +108,7 @@ object SniInterceptor {
         val learnedHit = ScoredBlockCache.isDomainBlocked(sniHost)
         if (learnedHit != null) {
             return makeDecision(true, sniHost, learnedHit.vendor.ifBlank { "" }, "learning-feedback").also {
-                cacheDecision(sniHost, it)
+                cacheDecision(cacheKey, it)
                 recordSlowPathLatency(slowPathStartedAt)
             }
         }
@@ -113,7 +117,7 @@ object SniInterceptor {
         if (userOwnedMatch != null && !userOwnedMatch.exceptionRule) {
             val vendor = userOwnedMatch.vendor.ifBlank { RuleRepository.classifyVendorSimple(context, sniHost) ?: "" }
             return makeDecision(true, sniHost, vendor, "rule-match:${userOwnedMatch.source.name.lowercase()}").also {
-                cacheDecision(sniHost, it)
+                cacheDecision(cacheKey, it)
                 recordSlowPathLatency(slowPathStartedAt)
             }
         }
@@ -123,7 +127,7 @@ object SniInterceptor {
         // 命中通用广告流量
         if (RuleRepository.shouldTreatAsGeneralAdTraffic(sniHost, vendor, appName)) {
             return makeDecision(true, sniHost, vendor, "general-ad-traffic").also {
-                cacheDecision(sniHost, it)
+                cacheDecision(cacheKey, it)
                 recordSlowPathLatency(slowPathStartedAt)
             }
         }
@@ -131,7 +135,7 @@ object SniInterceptor {
         // 命中广告 SDK 基础设施域名
         if (RuleRepository.looksLikeAdSdkInfraDomain(sniHost, vendor)) {
             return makeDecision(true, sniHost, vendor, "ad-sdk-infra").also {
-                cacheDecision(sniHost, it)
+                cacheDecision(cacheKey, it)
                 recordSlowPathLatency(slowPathStartedAt)
             }
         }
@@ -139,13 +143,13 @@ object SniInterceptor {
         // 小说 App 启发式拦截：未启用 MITM 时替小说 App 兜底识别广告 SDK SNI
         if (RuleRepository.shouldForceNovelQuicBlock(sniHost, appName, vendor)) {
             return makeDecision(true, sniHost, vendor, "novel-heuristic").also {
-                cacheDecision(sniHost, it)
+                cacheDecision(cacheKey, it)
                 recordSlowPathLatency(slowPathStartedAt)
             }
         }
 
         return makeDecision(false, sniHost, vendor, "pass").also {
-            cacheDecision(sniHost, it)
+            cacheDecision(cacheKey, it)
             recordSlowPathLatency(slowPathStartedAt)
         }
     }
@@ -164,9 +168,9 @@ object SniInterceptor {
         return SniBlockDecision(shouldBlock, domain, vendor, reason)
     }
 
-    private fun cacheDecision(sniHost: String, decision: SniBlockDecision) {
+    private fun cacheDecision(cacheKey: String, decision: SniBlockDecision) {
         synchronized(sniCacheLock) {
-            sniCache[sniHost] = CachedSniDecision(decision, System.currentTimeMillis())
+            sniCache[cacheKey] = CachedSniDecision(decision, System.currentTimeMillis())
         }
     }
 

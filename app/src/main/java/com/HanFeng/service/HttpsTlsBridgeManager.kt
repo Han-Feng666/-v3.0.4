@@ -360,7 +360,6 @@ object HttpsTlsBridgeManager {
         negotiatedAlpn: String?
     ) {
         val buffer = ByteArray(16 * 1024)
-        var filtered = false
         var pendingHttp1Bytes = ByteArray(0)
         val allowHttp1Filter = negotiatedAlpn.isNullOrBlank() || negotiatedAlpn == "http/1.1"
         var http2State = Http2FrameLogger.StreamState(Http2FrameLogger.Direction.SERVER_TO_CLIENT)
@@ -390,13 +389,13 @@ object HttpsTlsBridgeManager {
                     continue
                 }
             }
-            if (!filtered && allowHttp1Filter) {
+            // keep-alive 连接上每个响应都尝试组装过滤；溢出/Bypass 只影响当前响应，不永久关闭过滤
+            if (allowHttp1Filter) {
                 val bufferedPayload = pendingHttp1Bytes + payload
                 if (bufferedPayload.size > HttpMitmFilter.maxHttp1FilterBufferBytes()) {
                     logHttp1ResponsePassthrough(context, session, "http1-buffer-overflow bytes=${bufferedPayload.size}")
                     payload = bufferedPayload
                     pendingHttp1Bytes = ByteArray(0)
-                    filtered = true
                 } else {
                     when (val assembled = HttpMitmFilter.inspectBufferedHttp1Response(bufferedPayload, requestRef.get())) {
                         BufferedHttp1Result.AwaitMore -> {
@@ -407,7 +406,6 @@ object HttpsTlsBridgeManager {
                             logHttp1ResponsePassthrough(context, session, assembled.reason)
                             payload = bufferedPayload
                             pendingHttp1Bytes = ByteArray(0)
-                            filtered = true
                         }
                         is BufferedHttp1Result.Ready -> {
                             pendingHttp1Bytes = ByteArray(0)
@@ -415,14 +413,13 @@ object HttpsTlsBridgeManager {
                             if (assembled.remainderBytes.isNotEmpty()) {
                                 payload += assembled.remainderBytes
                             }
-                            filtered = true
                         }
                     }
                 }
             }
             writeAndFlush(output, payload)
         }
-        if (!filtered && allowHttp1Filter && pendingHttp1Bytes.isNotEmpty()) {
+        if (allowHttp1Filter && pendingHttp1Bytes.isNotEmpty()) {
             when (val assembled = HttpMitmFilter.finalizeBufferedHttp1Response(pendingHttp1Bytes)) {
                 is BufferedHttp1Result.Ready -> {
                     val finalPayload = applyHttp1Filter(context, session, assembled.responseBytes, requestRef.get()) + assembled.remainderBytes

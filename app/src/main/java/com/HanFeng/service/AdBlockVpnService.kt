@@ -216,7 +216,9 @@ class AdBlockVpnService : VpnService() {
         val staleResponse: ByteArray?,
         val failureResponse: ByteArray?,
         val protectedQuestion: Boolean,
-        val shouldUseActiveMitmRouting: Boolean
+        val shouldUseActiveMitmRouting: Boolean,
+        // 显式标记 sinkhole 拦截：上游失败时的 stale 兜底响应与广告拦截响应不再混淆
+        val blocked: Boolean = false
     )
     private val blockedIpNetworks by lazy(LazyThreadSafetyMode.NONE) { loadBlockedIpNetworks() }
 
@@ -1715,12 +1717,18 @@ class AdBlockVpnService : VpnService() {
         // Slow path: 缓存未命中 → 派发到异步 Worker，主线程继续处理后续包
         // 复用同一个 ByteArray 实例，避免 info.copy(payload=...) + 顶层 payload.copyOf() 双重分配
         val payloadCopy = info.payload.copyOf()
-        dnsTaskIn.offer(DnsAsyncTask(
+        val accepted = dnsTaskIn.offer(DnsAsyncTask(
             generation = activeTunGeneration,
             payload = payloadCopy,
             info = info.copy(payload = payloadCopy),
             question = question
         ))
+        if (!accepted) {
+            // 队列打满时立即回 SERVFAIL 让客户端快速重试，避免静默丢包导致解析超时
+            DnsMessageParser.buildServerFailureResponse(info.payload, question)?.let { failure ->
+                output.write(PacketCodec.buildUdpResponse(info, failure))
+            }
+        }
         return true
     }
 
@@ -1792,8 +1800,17 @@ class AdBlockVpnService : VpnService() {
     }
 
     private fun looksLikeIpAddress(value: String): Boolean {
-        return runCatching { java.net.InetAddress.getByName(value) }.isSuccess &&
-            (value.count { it == '.' } == 3 || value.contains(':'))
+        // 纯语法校验：热路径上禁止 InetAddress.getByName（对主机名会发起真实 DNS 查询造成阻塞）
+        val trimmed = value.trim()
+        if (trimmed.isEmpty()) return false
+        if (trimmed.contains(':')) {
+            return trimmed.all { it.isDigit() || it in "abcdefABCDEF:." }
+        }
+        if (trimmed.count { it == '.' } != 3) return false
+        return trimmed.split('.').all { part ->
+            part.isNotEmpty() && part.length <= 3 && part.all { it.isDigit() } &&
+                (part.length == 1 || !part.startsWith("0") || part == "0")
+        }
     }
 
     private val adFreeRewardDomainTokens = listOf(
@@ -1821,7 +1838,7 @@ class AdBlockVpnService : VpnService() {
         "event_callback", "eventcallback", "log_event", "logevent",
         "reward_event", "rewardevent", "earn_event", "earnevent",
         "coin_reward", "coinreward", "cash_reward", "cashreward",
-        "point_reward", "poin treward", "score_reward", "scorereward",
+        "point_reward", "pointreward", "score_reward", "scorereward",
         "diamond_reward", "diamondreward", "gold_reward", "goldreward",
         "gift_reward", "giftreward", "bonus_reward", "bonusreward",
         "prize_grant", "prizegrant", "lottery_reward", "lotteryreward",
@@ -2142,7 +2159,8 @@ class AdBlockVpnService : VpnService() {
                     staleResponse = sinkhole,
                     failureResponse = null,
                     protectedQuestion = protectedQuestion,
-                    shouldUseActiveMitmRouting = false
+                    shouldUseActiveMitmRouting = false,
+                    blocked = true
                 ))
             }
             return null
@@ -2160,7 +2178,8 @@ class AdBlockVpnService : VpnService() {
                     staleResponse = sinkhole,
                     failureResponse = null,
                     protectedQuestion = protectedQuestion,
-                    shouldUseActiveMitmRouting = false
+                    shouldUseActiveMitmRouting = false,
+                    blocked = true
                 ))
             }
             return null
@@ -2212,7 +2231,7 @@ class AdBlockVpnService : VpnService() {
         )
 
         // Blocked cases handled inline in processDnsTaskAsync, result was already queued
-        if (result.staleResponse != null && result.upstreamResult == null) {
+        if (result.blocked && result.staleResponse != null && result.upstreamResult == null) {
             // Sinkhole — blocked response
             output.write(PacketCodec.buildUdpResponse(info, result.staleResponse))
             StatsRepository.recordBlockedDns(this, vendor, appName, 512, source = StatsRepository.BlockSource.DNS_RULE)
@@ -2405,22 +2424,28 @@ class AdBlockVpnService : VpnService() {
             )
             return true
         }
-        val adCnameTokens = listOf(
-            "ad.", "ads.", "ad-", "ads-", "-ad.", "-ads.", "_ad.", "_ads.",
-            "adcdn", "adsdk", "adserver", "adtracker", "adtracking",
-            "ad-delivery", "ad-deliver", "addelivery",
-            "adx.", "-adx.", "ssp.", "-ssp.", "dsp.", "-dsp.",
-            "adsystem", "adnetwork", "ad-platform", "adplatform",
-            "adserving", "ad-bid", "adbid", "adexchange", "ad-exchange",
-            "monetization", "monetize", "adtech",
-            "pangle", "pangolin", "gdt.", "gdt-", "csj.", "csj-",
-            "bytedance", "bytecdn", "snssdk", "toutiao",
-            "doubleclick", "googlesyndication", "googleadservices", "imasdk",
-            "mopub", "snapads", "rayjump", "appsflyer", "adjust", "singular",
-            "vpaid", "omid", "mraid", "vast", "rewarded", "incentive", "inspire",
-            "video-ad", "video_ad", "videoad", "playable", "endcard", "companionad"
+        // 按 DNS label 边界匹配，避免子串误伤：contains("ad.") 会命中 download./upload./readonly. 等正常词
+        val labels = lower.split('.').filter { it.isNotBlank() }
+        val labelAdHit = labels.any { label ->
+            label == "ad" || label == "ads" || label == "adx" || label == "ssp" || label == "dsp" ||
+                label.startsWith("ad-") || label.startsWith("ads-") || label.startsWith("adx-") ||
+                label.endsWith("-ad") || label.endsWith("-ads") ||
+                label.endsWith("_ad") || label.endsWith("_ads") ||
+                label == "adserver" || label == "adservice" || label == "adsystem" || label == "adnetwork" ||
+                label == "adserving" || label == "adsdk" || label == "adcdn" || label == "adtech" ||
+                label.startsWith("adsystem") || label.startsWith("adserver") || label.startsWith("adservice")
+        }
+        val wholeHostStrongTokens = listOf(
+            "adcdn", "adsdk", "adserver", "adtracker", "adtracking", "ad-delivery", "ad-deliver",
+            "addelivery", "adsystem", "adnetwork", "ad-platform", "adplatform", "adserving",
+            "ad-bid", "adbid", "adexchange", "ad-exchange", "adtech",
+            "pangle", "pangolin", "doubleclick", "googlesyndication", "googleadservices", "imasdk",
+            "mopub", "snapads", "rayjump", "appsflyer",
+            "video-ad", "video_ad", "videoad", "endcard", "companionad"
         )
-        if (adCnameTokens.any { lower.contains(it) }) {
+        val strongTokenHit = wholeHostStrongTokens.any { lower.contains(it) }
+        val monetizationLabels = labels.any { it.startsWith("monetiz") || it.startsWith("rewards") || it == "rewarded" || it.startsWith("adtarget") || it.startsWith("admaster") }
+        if (labelAdHit || strongTokenHit || monetizationLabels) {
             val originalVendor = RuleRepository.classifyVendorFromHints(this, originalDomain, appName)
             RuleRepository.reportUnknownVendorIfNeeded(
                 context = this,
@@ -2463,7 +2488,14 @@ class AdBlockVpnService : VpnService() {
         isUdp: Boolean
     ): Boolean {
         if (httpDecryptEnabled && shouldBlockEncryptedDnsDirectFlow(info)) return true
+        // 反绕过守卫不依赖 MITM：DoH/DoT/DoQ 直连会绕过本地 DNS 拦截，纯 DNS 模式下同样要拦
+        if (!httpDecryptEnabled && shouldBlockEncryptedDnsDirectFlow(info)) return true
         if (isTcp && shouldBlockBySniWithoutMitm(info, output)) return true
+        // QUIC/DoQ 拦截不依赖 MITM：未装证书（纯 DNS 模式）也要拦广告 QUIC 流量，
+        // 阻断后 App 会回退 TCP，TCP SNI 拦截再处理一次
+        if (isUdp && TlsPortSet.isQuicUdpPort(info.destinationPort)) {
+            return shouldBlockQuicFlow(info)
+        }
         if (!httpDecryptEnabled) return false
         if (!shouldUseActiveMitmRouting()) return false
         if (isTcp) {
@@ -2472,22 +2504,31 @@ class AdBlockVpnService : VpnService() {
             observeHttpsTransparentProxyFlow(info)
             return handleHttpsProxyHandshake(info, output)
         }
-        return isUdp && TlsPortSet.isQuicUdpPort(info.destinationPort) && shouldBlockQuicFlow(info)
+        return false
     }
 
     private fun shouldBlockBySniWithoutMitm(
         info: com.HanFeng.model.PacketInfo,
         output: FileOutputStream
     ): Boolean {
-        if (info.protocol != OsConstants.IPPROTO_TCP || !TlsPortSet.isTlsTcpPort(info.destinationPort)) return false
+        if (!isSniffableTlsHandshakePacket(info)) return false
         return shouldBlockBySni(info, output)
+    }
+
+    // 常见 TLS 端口之外，广告 SDK 偶用 8080/8883/9443 等端口；
+    // 对首字节为 TLS handshake(0x16) 的包放宽端口限制，后续仍需通过完整 ClientHello 结构解析 + 规则匹配才拦
+    private fun isSniffableTlsHandshakePacket(info: com.HanFeng.model.PacketInfo): Boolean {
+        if (info.protocol != OsConstants.IPPROTO_TCP) return false
+        if (TlsPortSet.isTlsTcpPort(info.destinationPort)) return true
+        val payload = info.payload
+        return payload.isNotEmpty() && payload[0] == 0x16.toByte()
     }
 
     private fun shouldBlockBySni(
         info: com.HanFeng.model.PacketInfo,
         output: FileOutputStream
     ): Boolean {
-        if (info.protocol != OsConstants.IPPROTO_TCP || !TlsPortSet.isTlsTcpPort(info.destinationPort)) return false
+        if (!isSniffableTlsHandshakePacket(info)) return false
         val payload = info.payload
         if (payload.isEmpty()) return false
         // 只在有 SYN 或带 payload 的包中尝试解析 ClientHello
@@ -2849,7 +2890,7 @@ class AdBlockVpnService : VpnService() {
     private fun ensurePassthroughUdpSession(flowKey: String, info: com.HanFeng.model.PacketInfo): PassthroughUdpSession? {
         synchronized(passthroughUdpSessionCache) {
             passthroughUdpSessionCache[flowKey]?.let { existing ->
-                passthroughUdpSessionCache[flowKey] = existing.copy(lastSeenAt = System.currentTimeMillis())
+                existing.lastSeenAt = System.currentTimeMillis()
                 return existing
             }
         }
@@ -3118,7 +3159,7 @@ class AdBlockVpnService : VpnService() {
         val firstByte = payload[0].toInt() and 0xFF
         // QUIC 包特征：header form bit (0x80) + fixed bit (0x40)
         // Initial 包：0xC0-0xCF, Handshake 包：0xD0-0xDF, 0-RTT 包：0xE0-0xEF, 1-RTT 包：0x40-0x7F
-        val isQuicHeader = (firstByte and 0xC0) == 0xC0 || (firstByte and 0xC0) == 0x80 || (firstByte and 0x80) == 0x40
+        val isQuicHeader = (firstByte and 0xC0) == 0xC0 || (firstByte and 0xC0) == 0x80 || (firstByte and 0xC0) == 0x40
         if (!isQuicHeader) return false
         // 检查是否是 QUIC Initial 包（最常见于连接建立）
         val packetType = (firstByte and 0x30) shr 4
@@ -9630,15 +9671,9 @@ class AdBlockVpnService : VpnService() {
             return result
         }
         if (bytes.size == 16) {
-            val sb = StringBuilder(45)
-            for (i in bytes.indices step 2) {
-                if (i > 0) sb.append(':')
-                val hi = bytes[i].toInt() and 0xFF
-                val lo = bytes[i + 1].toInt() and 0xFF
-                val combined = (hi shl 8) or lo
-                if (combined != 0) sb.append(combined.toString(16))
-            }
-            return sb.toString()
+            // IPv6 用标准库规范化（含 :: 压缩），手写逐组拼接在含零组时会产出非法地址串，
+            // 导致 IPv6 IP 黑名单/路由缓存/加密 DNS 匹配全部失效
+            return formatIpv6Standard(bytes)
         }
         return InetAddress.getByAddress(bytes).hostAddress ?: ""
     }
@@ -9653,17 +9688,15 @@ class AdBlockVpnService : VpnService() {
             return sb
         }
         if (bytes.size == 16) {
-            for (i in bytes.indices step 2) {
-                if (i > 0) sb.append(':')
-                val hi = bytes[i].toInt() and 0xFF
-                val lo = bytes[i + 1].toInt() and 0xFF
-                val combined = (hi shl 8) or lo
-                if (combined != 0) sb.append(combined.toString(16))
-            }
+            sb.append(formatIpv6Standard(bytes))
             return sb
         }
         sb.append(InetAddress.getByAddress(bytes).hostAddress ?: "")
         return sb
+    }
+
+    private fun formatIpv6Standard(bytes: ByteArray): String {
+        return runCatching { InetAddress.getByAddress(bytes).hostAddress }.getOrNull() ?: ""
     }
 
     private fun resolveDestinationAppContext(info: com.HanFeng.model.PacketInfo): DestinationAppContext? {

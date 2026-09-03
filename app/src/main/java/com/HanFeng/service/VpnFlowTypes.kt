@@ -198,13 +198,15 @@ data class PassthroughTcpSocketSession(
     }
 }
 
-data class PassthroughUdpSession(
+class PassthroughUdpSession(
     val flowKey: String,
     val requestTemplate: com.HanFeng.model.PacketInfo,
     val socket: DatagramSocket,
     val targetIp: String,
     val targetPort: Int,
-    val lastSeenAt: Long
+    // 可变并原地更新：reader 线程持有同一实例做空闲判断，
+    // 若用 data class copy 更新 map，reader 仍持有旧对象导致活跃会话被误判超时断流
+    @Volatile var lastSeenAt: Long
 ) : ClosableBridgeSession {
     override fun close() {
         runCatching { socket.close() }

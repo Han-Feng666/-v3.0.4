@@ -1669,6 +1669,14 @@ object HttpMitmFilter {
         }
         val decodedBodyBytes = decodeContentEncodedBody(decodedTransferBytes, responseHeaders.contentEncoding)
             ?: return buildDecodeFailureResult(modifiedChunk, responseHeaders.contentEncoding)
+        // 真实二进制探测：图片/视频等二进制广告素材走替换/魔数拦截链路，避免以乱码形态进入文本信号检测
+        if (looksLikeBinaryBody(decodedBodyBytes)) {
+            val binaryReplacement = tryReplaceBinaryAdContent(session, modifiedChunk, requestInspection)
+            if (binaryReplacement != null) return binaryReplacement
+            val magicBlock = tryBlockAdBinaryByMagic(session, modifiedChunk, requestInspection)
+            if (magicBlock != null) return magicBlock
+            return FilterResult.PassThrough(modifiedChunk, "binary-response-body")
+        }
         val body = decodeAscii(decodedBodyBytes) ?: return FilterResult.PassThrough(modifiedChunk, "binary-response-body")
         return buildHttp1BodyFilterResult(
             session = session,
@@ -2288,13 +2296,22 @@ object HttpMitmFilter {
         requestInspection: RequestInspection?,
         contentType: String
     ): String? {
-        if (contentType.isBlank()) return null
+        val host = normalizeAuthority(requestInspection?.host ?: session.host)
+        if (contentType.isBlank()) {
+            // 无 Content-Type 的响应按主机/路径广告倾向做保守嗅探式检查，其余直通
+            return if (shouldPreferDeepInspection(
+                    host = host,
+                    path = requestInspection?.path,
+                    appName = session.appName,
+                    requestDomain = extractRequestDomain(requestInspection)
+                )
+            ) "deep-inspection-target-sniff" else null
+        }
         val targetedContentType = containsAnyContentType(contentType, "text/html", "json", "javascript")
         val adRewardContentType = FeatureSettingsRepository.isAdFreeRewardEnabled(
             TlsMitmSessionManager.getContextOrNull() ?: return null
         ) && containsAnyContentType(contentType, "xml", "mpegurl", "vnd.apple.mpegurl", "dash+xml", "mpd")
         if (!targetedContentType && !adRewardContentType) return null
-        val host = normalizeAuthority(requestInspection?.host ?: session.host)
         val shouldInspect = shouldPreferDeepInspection(
             host = host,
             path = requestInspection?.path,
@@ -3634,6 +3651,20 @@ object HttpMitmFilter {
 
     private fun decodeAscii(chunk: ByteArray): String? {
         return runCatching { String(chunk, StandardCharsets.ISO_8859_1) }.getOrNull()
+    }
+
+    // 二进制体探测：图片/视频等二进制广告素材首段普遍含 0x00 或高比例控制字符；
+    // 文本响应（HTML/JSON/JS/protobuf 编码文本）几乎不出现 0x00
+    private fun looksLikeBinaryBody(bytes: ByteArray): Boolean {
+        if (bytes.isEmpty()) return false
+        val sample = bytes.size.coerceAtMost(512)
+        var controlChars = 0
+        for (i in 0 until sample) {
+            val b = bytes[i].toInt() and 0xFF
+            if (b == 0x00) return true
+            if ((b < 0x09) || (b in 0x0E..0x1F)) controlChars++
+        }
+        return controlChars * 10 >= sample
     }
 
     private fun findHttpHeaderEnd(chunk: ByteArray): Int {
