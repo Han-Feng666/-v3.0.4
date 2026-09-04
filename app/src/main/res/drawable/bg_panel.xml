@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Liquid Glass panel：可见玻璃体 + 边缘反光 + 冷蓝描边 + 轻暗部 -->
+<!-- Liquid Glass panel：可见玻璃体 + 边缘反光 + 冷蓝描边 + 轻暗部
+     底色 82%-90% 白：配合窗口层 FLAG_BLUR_BEHIND 呈现毛玻璃，
+     同时保证低版本/省电模式（系统拒绝模糊渲染）下文字与背后界面内容不重叠 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="rectangle">
             <gradient
                 android:angle="270"
-                android:centerColor="#24FFFFFF"
-                android:endColor="#18FFFFFF"
-                android:startColor="#36FFFFFF" />
+                android:centerColor="#D4FFFFFF"
+                android:endColor="#CCFFFFFF"
+                android:startColor="#E0FFFFFF" />
             <corners android:radius="16dp" />
         </shape>
     </item>

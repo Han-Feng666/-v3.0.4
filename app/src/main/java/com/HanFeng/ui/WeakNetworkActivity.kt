@@ -172,7 +172,7 @@ class WeakNetworkActivity : AppCompatActivity() {
         val rvList = dialogView.findViewById<RecyclerView>(R.id.rvAppList)
         val emptyText = dialogView.findViewById<TextView>(R.id.tvAppPickEmpty)
 
-        val dialog = AlertDialog.Builder(this)
+        val dialog = StableDialog.builder(this)
             .setTitle("选择弱网目标 App")
             .setView(dialogView)
             .setNegativeButton("取消", null)

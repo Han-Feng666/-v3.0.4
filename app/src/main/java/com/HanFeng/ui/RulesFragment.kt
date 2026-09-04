@@ -716,7 +716,7 @@ class RulesFragment : Fragment(R.layout.fragment_rules) {
         val dialogContext = safeDialogActivity() ?: return
         runCatching {
             val sources = RuleRepository.getRemoteRuleSources(dialogContext)
-            val builder = AlertDialog.Builder(dialogContext)
+            val builder = StableDialog.builder(dialogContext)
                 .setTitle("规则源管理")
                 .setNeutralButton("添加规则源") { _, _ ->
                     showAddRemoteRuleSourceDialog()
@@ -746,9 +746,9 @@ class RulesFragment : Fragment(R.layout.fragment_rules) {
 
     private fun createRemoteRuleSourcesDialogBuilder(dialogContext: androidx.fragment.app.FragmentActivity): AlertDialog.Builder {
         return runCatching {
-            MaterialAlertDialogBuilder(dialogContext, R.style.ThemeOverlay_HanFeng_Dialog)
+            StableDialog.materialBuilder(dialogContext)
         }.getOrElse {
-            AlertDialog.Builder(dialogContext)
+            StableDialog.builder(dialogContext)
         }
     }
 
@@ -1005,9 +1005,9 @@ class RulesFragment : Fragment(R.layout.fragment_rules) {
 
     private fun createDialogBuilder(dialogContext: androidx.fragment.app.FragmentActivity): AlertDialog.Builder {
         return runCatching {
-            MaterialAlertDialogBuilder(dialogContext, R.style.ThemeOverlay_HanFeng_Dialog)
+            StableDialog.materialBuilder(dialogContext)
         }.getOrElse {
-            AlertDialog.Builder(dialogContext)
+            StableDialog.builder(dialogContext)
         }
     }
 
@@ -2201,7 +2201,7 @@ class RulesFragment : Fragment(R.layout.fragment_rules) {
             append(sampleText)
             append("\n\n你可以直接继续拦截，也可以只删除这些白名单候选，其余规则照常导入。")
         }
-        MaterialAlertDialogBuilder(activityHost, R.style.ThemeOverlay_HanFeng_Dialog)
+        StableDialog.materialBuilder(activityHost)
             .setTitle(title)
             .setMessage(message)
             .setPositiveButton("继续拦截") { _, _ -> onContinue() }

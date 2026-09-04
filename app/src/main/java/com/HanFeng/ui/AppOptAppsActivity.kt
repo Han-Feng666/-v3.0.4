@@ -133,7 +133,7 @@ class AppOptAppsActivity : AppCompatActivity() {
         var selectedIndex = presets.indexOfFirst { it == currentAffinity }
         if (selectedIndex < 0) selectedIndex = 3
 
-        val builder = AlertDialog.Builder(this)
+        val builder = StableDialog.builder(this)
         builder.setTitle("设置 CPU 亲和性")
         builder.setMessage("${app.label} (${app.packageName})")
 

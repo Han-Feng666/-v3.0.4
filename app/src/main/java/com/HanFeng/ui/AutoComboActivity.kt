@@ -85,7 +85,7 @@ class AutoComboActivity : AppCompatActivity() {
                 }
             }
             .setNegativeButton("取消", null)
-            .show()
+            .showSafely(this, "glass-dialog")
     }
 
     private fun refreshList() {

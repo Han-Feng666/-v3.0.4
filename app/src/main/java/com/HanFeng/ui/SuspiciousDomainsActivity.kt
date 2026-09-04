@@ -288,7 +288,7 @@ class SuspiciousDomainsActivity : BaseActivity() {
     private fun showDomainActions(sample: SuspiciousDomainItem) {
         val actions = arrayOf("添加拦截规则", "手动分类后添加", "复制域名")
         styleDialog(
-            MaterialAlertDialogBuilder(this, R.style.ThemeOverlay_HanFeng_Dialog)
+            StableDialog.materialBuilder(this)
                 .setTitle(sample.domain)
                 .setMessage(
                     "最近出现：${formatTimestamp(sample.lastSeenAt)}\n" +
@@ -335,7 +335,7 @@ class SuspiciousDomainsActivity : BaseActivity() {
             setPadding(24, 20, 24, 20)
         }
         val dialog = styleDialog(
-            MaterialAlertDialogBuilder(this, R.style.ThemeOverlay_HanFeng_Dialog)
+            StableDialog.materialBuilder(this)
                 .setTitle("添加并分类")
                 .setView(input)
                 .setPositiveButton("保存", null)
@@ -388,6 +388,7 @@ class SuspiciousDomainsActivity : BaseActivity() {
             }
         }
         dialog.show()
+        StableDialog.applyLiquidGlassWindow(dialog)
         return dialog
     }
 

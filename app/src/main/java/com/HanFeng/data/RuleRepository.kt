@@ -4848,6 +4848,9 @@ object RuleRepository {
         parseFastDnsRedirectRule(normalizedLine, lineContext)?.let { return it }
         parseFastProviderDomainRule(normalizedLine, lineContext)?.let { return it }
         parseFastWildcardDomainRule(normalizedLine, lineContext)?.let { return it }
+        // Unbound local-zone / RPZ 明确阻断记录
+        parseUnboundLocalZoneRule(normalizedLine)?.let { return it.first() }
+        parseRpzRule(normalizedLine)?.let { return it.first() }
         sanitizeDomain(normalizeDomainToken(normalizedLine))?.let { domain ->
             return ParsedRule(domain = domain, isException = false, vendorHints = lineContext.vendorHints)
         }
@@ -5152,6 +5155,9 @@ object RuleRepository {
         parseDotPrefixDomainRule(normalizedLine)?.let { return it.withVendorHints(lineContext.vendorHints) }
         // 添加 IPv6 Hosts 规则解析
         parseIPv6HostsRule(normalizedLine)?.let { return it.withVendorHints(lineContext.vendorHints) }
+        // 添加 Unbound local-zone / RPZ 格式规则解析
+        parseUnboundLocalZoneRule(normalizedLine)?.let { return it.withVendorHints(lineContext.vendorHints) }
+        parseRpzRule(normalizedLine)?.let { return it.withVendorHints(lineContext.vendorHints) }
 
         val trimmedLine = normalizedLine.trim()
         if (trimmedLine.startsWith("+.") && trimmedLine.substring(2).isNotBlank()) {
@@ -6161,6 +6167,60 @@ object RuleRepository {
             val sanitized = sanitizeDomain(normalizeDomainToken(domain)) ?: return null
             listOf(ParsedRule(domain = sanitized, isException = false))
         }.getOrNull()
+    }
+
+    /**
+     * Unbound local-zone 格式（Pi-hole/Unbound 广告拦截配置常用）：
+     *   local-zone: "doubleclick.net" static|refused|transparent|deny|always_nxdomain
+     *   local-zone: "ads.example.com" refuse
+     * 只拦明确阻断语义（static/refused/deny/always_nxdomain/always_refuse），
+     * transparent/notify 等放行语义不导入，避免误拦
+     */
+    private fun parseUnboundLocalZoneRule(line: String): List<ParsedRule>? {
+        val trimmed = line.trim()
+        if (!trimmed.startsWith("local-zone:", ignoreCase = true)) return null
+        val body = trimmed.substringAfter(':').trim()
+        if (body.length < 2 || !body.startsWith("\"")) return null
+        val closingQuote = body.indexOf('"', 1)
+        if (closingQuote <= 1) return null
+        val domain = sanitizeDomain(normalizeDomainToken(body.substring(1, closingQuote).trim())) ?: return null
+        val zoneType = body.substring(closingQuote + 1).trim().lowercase().trim('"')
+        val blocking = zoneType == "static" || zoneType == "refused" || zoneType == "refuse" ||
+            zoneType == "deny" || zoneType == "always_nxdomain" || zoneType == "always_refuse" ||
+            zoneType.isBlank()
+        if (!blocking) return null
+        return listOf(ParsedRule(domain = domain, isException = false))
+    }
+
+    /**
+     * RPZ (Response Policy Zone) 格式：
+     *   ads.example.com.  CNAME .
+     *   *.ads.example.com.  CNAME .
+     *   example.com.  A 127.0.0.1
+     *   example.com.  CNAME panda-ads.example.net.
+     *   ; rpz-passthru / rpz-drop 等行动作按语义处理
+     * 只导入目标为根(.)、回环地址或 rpz-drop 的明确阻断记录
+     */
+    private fun parseRpzRule(line: String): List<ParsedRule>? {
+        val trimmed = line.trim()
+        if (trimmed.isBlank() || trimmed.startsWith(";")) return null
+        val tokens = trimmed.split(splitWhitespaceRegex).filter { it.isNotBlank() }
+        if (tokens.size < 3) return null
+        val owner = tokens[0].removeSuffix(".")
+        if (owner.isBlank() || owner.contains('/') || owner.contains('$')) return null
+        val sanitized = sanitizeDomain(normalizeDomainToken(owner)) ?: return null
+        val recordType = tokens[1].uppercase()
+        val target = tokens[2].lowercase()
+        val isBlocking = when {
+            recordType == "CNAME" && (target == "." || target.endsWith(".rpz-drop.")) -> true
+            recordType == "A" && (target == "127.0.0.1" || target == "0.0.0.0") -> true
+            recordType == "AAAA" && (target == "::1" || target == "::") -> true
+            else -> false
+        }
+        if (!isBlocking) return null
+        // *.example.com. 通配 → 直接按后缀域名规则导入（与 hosts 后缀语义一致）
+        val domain = sanitized.removePrefix("*.")
+        return listOf(ParsedRule(domain = domain, isException = false))
     }
 
     private fun parseClashRule(line: String): List<ParsedRule>? {

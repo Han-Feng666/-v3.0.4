@@ -234,14 +234,14 @@ class DecisionDomainsActivity : BaseActivity() {
                         val newAction = if (blocked) "放行" else "拦截"
                         
                         runCatching {
-                            android.app.AlertDialog.Builder(context)
+                            StableDialog.builder(context)
                                 .setTitle("切换决策")
                                 .setMessage("将 $display\n从【${currentAction}】切换为【${newAction}】？")
                                 .setNegativeButton("取消", null)
                                 .setPositiveButton("确认") { _, _ ->
                                     onToggleRequest(item)
                                 }
-                                .show()
+                                .showSafely(context, "glass-dialog")
                         }
                         true
                     }

@@ -968,3 +968,90 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
   - 线程优化新建 AppOptAppsActivity，读取所有第三方 APP，列表显示，点进可设置 CPU 亲和性（小核/大核/全部/自定义），规则保存到 PerformanceTunerRepository 的 appopt_rule_text。
   - Shizuku 权限管理按钮改为直接调用 `ShizukuRepository.requestPermission()` 触发系统授权，不再打开自定义管理页面。ShizukuPermissionManageActivity 保留但不从设置页跳转。
   - 构建 shell 命令时避免在 Kotlin 字符串中使用 `\$` 转义，改用 `${'$'}` 变量 D 模式，确保 Kotlin 1.9 兼容。
+
+[构建链路重建与 native 阶段 OOM 对策]
+- Date: 2026-09-03
+- Context: Agent 在执行"修复并优化 APP 并提高广告拦截"编译验证时发现（环境重置后 /opt/toolset、SDK、JDK 全部丢失）
+- Category: 环境配置
+- Instructions:
+  - 环境重置后重建顺序：`apt-get update && apt-get install -y openjdk-17-jdk-headless unzip`；Gradle 8.8 用腾讯镜像 `https://mirrors.cloud.tencent.com/gradle/gradle-8.8-bin.zip` 解压到 `/opt/toolset/`；cmdline-tools 用 `commandlinetools-linux-11076708_latest.zip` 移到 `/opt/android-sdk/cmdline-tools/latest`；`sdkmanager --licenses` 后装 `platforms;android-36`、`build-tools;36.1.0`、`platform-tools`。
+  - 构建时 Gradle daemon 会在 `:shizuku-fork:manager` native CMake 阶段因内存被杀（daemon disappeared），对策：background terminal 内存配额提到 62%、加 `-Dorg.gradle.workers.max=2` 限制并行后可完整通过。
+  - Kotlin 编译错误会在 native 阶段之前暴露；日志带 `| tail` 会缓冲到结束才写文件，查进度用 `ls app/build/intermediates` 和 `ps aux | grep GradleDaemon`。
+
+[规则与拦截链路缓存一致性约定]
+- Date: 2026-09-03
+- Context: Agent 在修复"新导入规则不生效/追加后拦截异常"时确认
+- Category: 代码模式
+- Instructions:
+  - 任何规则追加/修改路径必须同步处理 `cachedBloomFilter`（增量 put 或置 null），否则 computeFindMatchingRule 的 Bloom 预筛选会永久否决新域名。
+  - simpleIndex/trie 走增量更新保证导入即时生效；ruleMap/universalRuleMap/cnameRuleIndex/regex/keyword 系列缓存置 null 惰性重建，避免追加态脏读。
+  - `$important` 语义统一为"优先于普通例外"，四处索引构建路径（文件加载/updateRuleCache/rebuildCachesFromRules/内存路径）行为必须一致。
+  - 带路径的 `||domain/path^` 规则禁止在任何 fast path 降级成整域拦截；DNS 层匹配必须跳过 pathPattern/keywordPattern 规则。
+  - SniInterceptor 决策缓存键必须含 appName 与 isProtectedDomain；QUIC/加密 DNS 反绕过判定不得放在 httpDecryptEnabled 门控之内。
+
+[Root 区域设备标识失效根因与修复模式]
+- Date: 2026-09-03
+- Context: 用户反馈 Root 区域仅腾讯游戏防标记和证书安装有效，其余设备标识功能全部失效
+- Category: 排错调试
+- Instructions:
+  - Android 8+ 各 App 读的是按包名隔离的 SSAID（settings_ssaid.xml 中带 package= 的 setting 行），
+    只改全局 secure.android_id 对 App 无效；写入必须同时重写全部 App 级 SSAID 条目，验证也以 SSAID 为准。
+  - prop 伪装（IMEI/SN/序列号/型号）失效根因：RIL/modem 进程重启会从 NV 回读覆盖 prop，
+    模块 service.sh 仅开机跑一次。修复模式 = HanFengPropWatch 守护（/data/adb/HanFengPropWatch/watcher.sh，
+    nohup + watcher.pid 幂等，30 秒周期按 props.list 增量恢复），service.sh 每次写规则时重写并携带守护拉起逻辑。
+  - Kotlin 字符串内 shell 变量统一用 ${'$'} 注入（stripHead/stripTail 模式），禁止 \$ 转义。
+  - 类体内不能声明 private const val（只能 companion object / 顶层）。
+  - 用户确认有效必须保留的功能：腾讯游戏防设备标记、证书安装到系统。
+
+[Shizuku 功能入口主动授权约定]
+- Date: 2026-09-03
+- Context: 用户要求点击 Shizuku 区域功能时主动申请 Shizuku 权限
+- Category: 代码模式
+- Instructions:
+  - 设置页 Shizuku 功能入口统一走 SettingsActivity.requestShizukuThen：未授权主动调
+    ShizukuRepository.requestPermission() 弹系统授权框；binder 不可达先尝试
+    BuiltInShizukuStarter.activateViaRoot() 自动拉起 server 再授权；授权成功经
+    shizukuPermissionListener 预热增强服务后接续原操作（pendingShizukuAction）。
+  - 授权结果监听需在 Activity onCreate 注册 / onDestroy 移除，与 MainActivity 的监听互不冲突（同一 REQUEST_CODE=4096）。
+
+[规则厂商分类与导入链路约定]
+- Date: 2026-09-03
+- Context: 用户反馈导入规则文件后厂商全部归入"其它"
+- Category: 排错调试
+- Instructions:
+  - 流式导入 fast path 的 buildCompactImportedRule 必须按域名 classifyVendorSimple 识别厂商并持久化；
+    规则列表按存储的 vendor 字段分组展示，无运行时重算，硬编码 DEFAULT_VENDOR 会整批归"其它"。
+  - 存量修复走 getRules 加载迁移：vendor==DEFAULT 且为简单域名规则时重算，随 migrated 标记落盘。
+
+[拦截态 DNS 延迟与采样约定]
+- Date: 2026-09-03
+- Context: Agent 在优化"开启拦截后网络延迟"时确认
+- Category: 代码模式
+- Instructions:
+  - Android Q+ TUN 为阻塞读，异步 DNS 应答必须由独立 drain 协程经 tunOutputStream 写出
+    （launchDnsResultDrainer，10ms 周期），依赖主循环"下一个包"带出会滞留到客户端重传（1-5 秒延迟）。
+  - DNS worker 现为双线程（DnsWorker/DnsWorker2），并发消费 dnsTaskIn，慢查询互不阻塞；
+    修改 worker 生命周期时需同步 interrupt 两个线程并取消 drain 协程。
+  - ProcessMonitor 采样按 SamplingMode 维护独立 job（modeJobs map），
+    stopSampling(mode) 只停自己那份，FloatingBallService 停 FOREGROUND_ONLY、进程页停 FULL。
+  - 进程页主线程禁止调 SuSession.open()（同步 fork su 最长 60s ANR），
+    isBackingShellAvailable 只做 findSuBinary 无阻塞探测。
+
+[使用说明维护边界]
+- Date: 2026-09-03
+- Context: 用户要求使用说明只补 Root 区域功能说明
+- Category: 工作流协作
+- Instructions:
+  - GuideActivity.DEFAULT_GUIDE_CONTENT 章节编号固定（一至二十四），用户未要求时不新增/调整章节；
+    Root 区域功能变化只更新"二十四、Root 区域功能说明"章节内容。
+
+[免广告领奖励跨层放行约定]
+- Date: 2026-09-03
+- Context: 用户问"免广告领奖励真的能用吗"，排查发现开关只覆盖 DNS 放行层且判定在规则命中之后
+- Category: 排错调试
+- Instructions:
+  - 奖励放行必须先于规则命中判定贯通四层：DNS sinkhole（processDnsTaskAsync/handleManagedDnsQuery）、
+    SNI（SniInterceptor.evaluate 的 rule-match RST 之前）、QUIC/MITM 决策
+    （resolveDomainDecisionContextForApp 返回非拦截上下文）、MITM 内容层（既有 isAdFreeRewardEnabled 分支）。
+  - 放行判定：reward/incentiv 语义域名；白名单与登录鉴权域名（isWhitelistedDomain/isSensitiveAuthDomain）绝不放行。
+  - 新增任何拦截层（如未来 TCP 53 DNS、QUIC 新分支）时必须同步接入奖励豁免，否则开关又会形同虚设。

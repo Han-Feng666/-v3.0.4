@@ -299,7 +299,7 @@ class MainActivity : BaseActivity() {
         val isChineseRom = DeviceCompatibilityHelper.isChineseRom()
         val brand = Build.BRAND.take(1).uppercase() + Build.BRAND.drop(1)
         runCatching {
-            MaterialAlertDialogBuilder(this, R.style.ThemeOverlay_HanFeng_Dialog)
+            StableDialog.materialBuilder(this)
                 .setTitle("保持后台运行")
                 .setMessage(
                     buildString {
@@ -373,7 +373,7 @@ class MainActivity : BaseActivity() {
         }
         val latestSeenAt = pendingDomains.maxOfOrNull { it.lastSeenAt } ?: System.currentTimeMillis()
         runCatching {
-            val dialog = MaterialAlertDialogBuilder(this, R.style.ThemeOverlay_HanFeng_Dialog)
+            val dialog = StableDialog.materialBuilder(this)
                 .setTitle("发现疑似广告域名")
                 .setMessage(
                     buildString {

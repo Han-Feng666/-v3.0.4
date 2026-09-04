@@ -40,7 +40,7 @@
     <!-- Liquid Glass palette
          控件规范：透明填充(3%白底)、细长斜向反光(≤12%)、冷蓝轮廓高光(0.5dp/6%)、投影(Y2/4%) -->
     <color name="hf_glass_top">#00000000</color>
-    <color name="hf_glass_mid">#00000000</color>
+    <color name="hf_glass_mid">#E8FFFFFF</color>
     <color name="hf_glass_bottom">#00000000</color>
     <!-- 玻璃体填充：白 18%，保证复杂背景上仍能看清控件边界与文字 -->
     <color name="hf_glass_fill">#2EFFFFFF</color>

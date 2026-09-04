@@ -3,6 +3,7 @@ package com.HanFeng.core.network
 import android.app.Activity
 import android.content.Context
 import androidx.appcompat.app.AlertDialog
+import com.HanFeng.ui.StableDialog
 import com.HanFeng.ui.showSafely
 import com.google.gson.Gson
 import com.HanFeng.data.FeatureSettingsRepository
@@ -143,7 +144,7 @@ object UserAdFeedbackManager {
             LogRepository.append(activity, "User ad feedback pending rule dialog skipped: activity unavailable")
             return
         }
-        AlertDialog.Builder(activity)
+        StableDialog.builder(activity)
             .setTitle("待确认广告规则")
             .setItems(labels) { _, which ->
                 confirmPendingRule(activity, rules[which].id)

@@ -162,7 +162,7 @@ class PerformanceTunerActivity : BaseActivity() {
                 refreshStatus()
             }
             .setNegativeButton("取消", null)
-            .show()
+            .showSafely(this, "glass-dialog")
     }
 
     private fun toggleScene(start: Boolean) {
@@ -207,7 +207,7 @@ class PerformanceTunerActivity : BaseActivity() {
                 .setTitle("SCENE 日志（最近 200 行）")
                 .setMessage(log.ifBlank { "(暂无日志)" })
                 .setPositiveButton("关闭", null)
-                .show()
+                .showSafely(this@PerformanceTunerActivity, "glass-dialog")
         }
     }
 

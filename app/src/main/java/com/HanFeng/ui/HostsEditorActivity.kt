@@ -72,7 +72,7 @@ class HostsEditorActivity : BaseActivity() {
 
     private fun showResult(title: String, summary: String) {
         if (isFinishing || isDestroyed) return
-        AlertDialog.Builder(this)
+        StableDialog.builder(this)
             .setTitle(title)
             .setMessage(summary.ifBlank { "没有服务反馈。" })
             .setPositiveButton("确定", null)

@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Liquid Glass secondary button (pressed)：玻璃体加深，边缘反光增强 -->
+<!-- Liquid Glass secondary button (pressed)：玻璃体加深，边缘反光增强（按压态底色同步提高不透明度） -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="rectangle">
             <gradient
                 android:angle="270"
-                android:centerColor="#3DFFFFFF"
-                android:endColor="#2AFFFFFF"
-                android:startColor="#52FFFFFF" />
+                android:centerColor="#C8FFFFFF"
+                android:endColor="#BFFFFFFF"
+                android:startColor="#D2FFFFFF" />
             <corners android:radius="30dp" />
         </shape>
     </item>

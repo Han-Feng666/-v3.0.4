@@ -720,7 +720,7 @@ syncWeakNetDesc()
         val currentParams = FeatureSettingsRepository.getCustomTrackingParams(this)
         val items = currentParams.toMutableList()
         val itemsArray = (items + "添加新参数...").toTypedArray()
-        AlertDialog.Builder(this)
+        StableDialog.builder(this)
             .setTitle("自定义追踪参数 ($items.size 个)")
             .setItems(itemsArray) { _, which ->
                 if (which < items.size) {
@@ -734,7 +734,7 @@ syncWeakNetDesc()
     }
 
     private fun showEditCustomParamDialog(param: String) {
-        AlertDialog.Builder(this)
+        StableDialog.builder(this)
             .setTitle("编辑 / 删除: $param")
             .setItems(arrayOf("删除此参数", "取消")) { _, which ->
                 if (which == 0) {
@@ -751,7 +751,7 @@ syncWeakNetDesc()
             hint = "输入追踪参数名，如: track_id"
             setSingleLine()
         }
-        AlertDialog.Builder(this)
+        StableDialog.builder(this)
             .setTitle("添加自定义追踪参数")
             .setView(input)
             .setMessage("参数名仅使用小写字母、数字、下划线和连字符")
@@ -773,7 +773,7 @@ syncWeakNetDesc()
         val currentHeaders = FeatureSettingsRepository.getCustomTrackingHeaders(this)
         val items = currentHeaders.toMutableList()
         val itemsArray = (items + "添加新头...").toTypedArray()
-        AlertDialog.Builder(this)
+        StableDialog.builder(this)
             .setTitle("自定义追踪头 ($items.size 个)")
             .setItems(itemsArray) { _, which ->
                 if (which < items.size) {
@@ -787,7 +787,7 @@ syncWeakNetDesc()
     }
 
     private fun showEditCustomHeaderDialog(header: String) {
-        AlertDialog.Builder(this)
+        StableDialog.builder(this)
             .setTitle("编辑 / 删除: $header")
             .setItems(arrayOf("删除此头", "取消")) { _, which ->
                 if (which == 0) {
@@ -804,7 +804,7 @@ syncWeakNetDesc()
             hint = "输入请求头名，如: x-custom-tracker"
             setSingleLine()
         }
-        AlertDialog.Builder(this)
+        StableDialog.builder(this)
             .setTitle("添加自定义追踪头")
             .setView(input)
             .setMessage("头名仅使用小写字母、数字、连字符")
@@ -1086,6 +1086,7 @@ syncWeakNetDesc()
             .create()
 
         dialog.show()
+        StableDialog.applyLiquidGlassWindow(dialog)
         btnRandom.setOnClickListener {
             etInput.setText(com.HanFeng.adblocker.shizuku.DeviceIdModifier.generateRandomAndroidId())
             etInput.setSelection(etInput.text.length)
@@ -1187,6 +1188,7 @@ syncWeakNetDesc()
             .create()
 
         dialog.show()
+        StableDialog.applyLiquidGlassWindow(dialog)
         btnRandom.setOnClickListener {
             etInput.setText(com.HanFeng.adblocker.shizuku.DeviceIdModifier.generateRandomSerial())
             etInput.setSelection(etInput.text.length)
@@ -1377,6 +1379,7 @@ syncWeakNetDesc()
             .create()
 
         dialog.show()
+        StableDialog.applyLiquidGlassWindow(dialog)
 
         lifecycleScope.launch {
             val pair = withContext(Dispatchers.IO) {
@@ -1520,6 +1523,7 @@ syncWeakNetDesc()
             .create()
 
         dialog.show()
+        StableDialog.applyLiquidGlassWindow(dialog)
         btnReset.setOnClickListener {
             lifecycleScope.launch {
                 val result = withContext(Dispatchers.IO) {
@@ -1656,6 +1660,7 @@ syncWeakNetDesc()
             .create()
 
         dialog.show()
+        StableDialog.applyLiquidGlassWindow(dialog)
         btnRandom.setOnClickListener {
             etInput.setText(com.HanFeng.adblocker.shizuku.DeviceIdModifier.generateRandomSn())
             etInput.setSelection(etInput.text.length)
@@ -1816,6 +1821,7 @@ syncWeakNetDesc()
             .create()
 
         dialog.show()
+        StableDialog.applyLiquidGlassWindow(dialog)
         btnRandom.setOnClickListener {
             val rand1 = com.HanFeng.adblocker.shizuku.DeviceIdModifier.generateRandomImei()
             val rand2 = com.HanFeng.adblocker.shizuku.DeviceIdModifier.generateRandomImei()
@@ -1976,6 +1982,7 @@ syncWeakNetDesc()
             .create()
 
         dialog.show()
+        StableDialog.applyLiquidGlassWindow(dialog)
         btnRandom.setOnClickListener {
             etInput.setText(com.HanFeng.adblocker.shizuku.DeviceIdModifier.generateRandomMeid())
             etInput.setSelection(etInput.text.length)
@@ -2075,6 +2082,7 @@ syncWeakNetDesc()
             .setPositiveButton("取消") { _, _ -> }
             .create()
         loadingDialog.show()
+        StableDialog.applyLiquidGlassWindow(loadingDialog)
 
         lifecycleScope.launch {
             // 异步列包 — 优先用 RootScriptExecutor 的 pm list packages -3 拿干净列表
@@ -2225,6 +2233,7 @@ syncWeakNetDesc()
             }
             .create()
         dialog.show()
+        StableDialog.applyLiquidGlassWindow(dialog)
     }
 
     private fun executeConvertSystemAppBatch(targets: List<ThirdPartyAppEntry>) {
@@ -2358,7 +2367,7 @@ syncWeakNetDesc()
         installedPackages: Set<String>
     ) {
         if (targets.isEmpty()) {
-            MaterialAlertDialogBuilder(this, R.style.ThemeOverlay_HanFeng_Dialog)
+            StableDialog.materialBuilder(this)
                 .setTitle("暂无可治理项目")
                 .setMessage("当前没有可展示的治理目标。")
                 .setPositiveButton("我知道了", null)
@@ -2369,7 +2378,7 @@ syncWeakNetDesc()
             add("批量治理当前列表（${targets.size} 项）")
             addAll(buildPromoTargetLabels(targets, installedPackages))
         }.toTypedArray()
-        AlertDialog.Builder(this)
+        StableDialog.builder(this)
             .setTitle("推广治理")
             .setMessage("已识别到 ${targets.size} 个治理目标。首项用于批量治理，其余项用于单独治理。")
             .setItems(labels) { _, which ->
@@ -2388,7 +2397,7 @@ syncWeakNetDesc()
             showOperationResult("当前列表下没有识别到可批量治理的已安装推广项")
             return
         }
-        AlertDialog.Builder(this)
+        StableDialog.builder(this)
             .setTitle("批量治理")
             .setMessage("当前列表内识别到 ${targets.size} 个可批量处理的治理目标。")
             .setItems(arrayOf("智能治理当前列表", "关闭推送广告", "恢复推送广告", "整包冻结", "解冻已冻结项目", "整包暂停", "恢复暂停")) { _, which ->
@@ -3599,7 +3608,7 @@ syncWeakNetDesc()
             setPadding(48, 24, 48, 0)
             addView(editText)
         }
-        com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.ThemeOverlay_HanFeng_Dialog)
+        StableDialog.materialBuilder(this)
             .setTitle("自定义空闲时长")
             .setMessage("输入 1 到 180 之间的数字(分钟)")
             .setView(container)

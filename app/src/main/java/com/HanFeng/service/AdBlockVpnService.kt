@@ -2574,6 +2574,9 @@ class AdBlockVpnService : VpnService() {
         // 反绕过守卫不依赖 MITM：DoH/DoT/DoQ 直连会绕过本地 DNS 拦截，纯 DNS 模式下同样要拦
         if (!httpDecryptEnabled && shouldBlockEncryptedDnsDirectFlow(info)) return true
         if (isTcp && shouldBlockBySniWithoutMitm(info, output)) return true
+        // 明文 HTTP 广告检查不依赖 MITM：国内 SDK 仍大量使用 80 端口上报/拉取广告物料，
+        // 解析请求头 Host 命中广告域名即断连（仅对带 payload 的包触发，零额外开销）
+        if (isTcp && shouldBlockPlainHttpByHost(info, output)) return true
         // QUIC/DoQ 拦截不依赖 MITM：未装证书（纯 DNS 模式）也要拦广告 QUIC 流量，
         // 阻断后 App 会回退 TCP，TCP SNI 拦截再处理一次
         if (isUdp && TlsPortSet.isQuicUdpPort(info.destinationPort)) {
@@ -2596,6 +2599,112 @@ class AdBlockVpnService : VpnService() {
     ): Boolean {
         if (!isSniffableTlsHandshakePacket(info)) return false
         return shouldBlockBySni(info, output)
+    }
+
+    // 明文 HTTP Host 检查的会话级去重：同一 flowKey 只判首包，避免每个数据包重复解析
+    private val plainHttpCheckedFlows = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    /**
+     * 无 MITM 时的明文 HTTP 广告拦截：解析 80 端口请求的 Host 头，
+     * 域名命中广告判定即 RST。不修改任何流量内容，纯 DNS/MITM 架构外的补充拦截点。
+     */
+    private fun shouldBlockPlainHttpByHost(
+        info: com.HanFeng.model.PacketInfo,
+        output: FileOutputStream
+    ): Boolean {
+        if (info.protocol != OsConstants.IPPROTO_TCP) return false
+        if (info.destinationPort != 80) return false
+        val payload = info.payload
+        // 只检查可能携带完整请求头的包（GET/POST 首包），减少解析开销
+        if (payload.size < 16) return false
+        val flowKey = buildCacheKeys(info).flowKey
+        if (plainHttpCheckedFlows.containsKey(flowKey)) return false
+        val firstBytes = ByteArray(6)
+        System.arraycopy(payload, 0, firstBytes, 0, 6)
+        val method = String(firstBytes, Charsets.ISO_8859_1).uppercase()
+        val looksLikeHttpRequest = method.startsWith("GET ") || method.startsWith("POST") ||
+            method.startsWith("HEAD") || method.startsWith("PUT ") ||
+            method.startsWith("DELETE") || method.startsWith("OPTIO")
+        if (!looksLikeHttpRequest) {
+            plainHttpCheckedFlows[flowKey] = false
+            return false
+        }
+        // Host 头几乎总在前 1KB 内
+        val headerSample = String(payload, 0, payload.size.coerceAtMost(1024), Charsets.ISO_8859_1)
+        val headerEnd = headerSample.indexOf("\r\n\r\n")
+        val hostLine = runCatching {
+            val searchArea = if (headerEnd > 0) headerSample.substring(0, headerEnd) else headerSample
+            searchArea.lineSequence()
+                .firstOrNull { it.startsWith("Host:", ignoreCase = true) || it.startsWith("Host :", ignoreCase = true) }
+        }.getOrNull()
+        plainHttpCheckedFlows[flowKey] = true
+        val rawHost = hostLine?.substringAfter(':')?.trim().orEmpty()
+        if (rawHost.isBlank()) return false
+        // 去掉端口号（Host: example.com:8080）
+        val host = if (rawHost.lastIndexOf(':') > 0 && !rawHost.contains("]")) {
+            rawHost.substring(0, rawHost.lastIndexOf(':'))
+        } else {
+            rawHost
+        }
+        return shouldBlockPlainHttpByHostDecide(info, output, host, flowKey)
+    }
+
+    private fun shouldBlockPlainHttpByHostDecide(
+        info: com.HanFeng.model.PacketInfo,
+        output: FileOutputStream,
+        rawHost: String,
+        flowKey: String
+    ): Boolean {
+        val host = rawHost.trim().trim('[', ']').lowercase()
+        if (host.isBlank() || host == "localhost" || host.endsWith(".local")) return false
+        if (isProtectedTrafficDomain(host)) return false
+        if (RuleRepository.isWhitelistedDomain(host) || RuleRepository.isSensitiveAuthDomain(host)) return false
+        if (FeatureSettingsRepository.isAdFreeRewardEnabled(this) && looksLikeAdFreeRewardDomain(host)) return false
+        val appName = resolveAppName(host, info)
+        val vendor = classifyVendorCached(host, appName)
+        val decisionContext = resolveDomainDecisionContext(
+            domain = host,
+            info = info,
+            knownAppName = appName
+        )
+        val matchedRule = decisionContext.matchedRule
+        val isAd = matchedRule != null ||
+            RuleRepository.looksLikeAdSdkInfraDomain(host, vendor) ||
+            RuleRepository.looksLikeAdDomain(host) ||
+            RuleRepository.shouldTreatAsGeneralAdTraffic(host, vendor, appName)
+        if (!isAd) return false
+        writeTcpRst(info)
+        StatsRepository.recordBlockedAuto(this, vendor.ifBlank { "明文HTTP" }, appName, host, 0, StatsRepository.BlockSource.URL_HEURISTIC, StatsRepository.ProtocolHint.DNS)
+        logDecisionOnce(
+            key = "plain-http-block:$host:${info.destinationAddress.contentToString().take(12)}",
+            message = "Blocked plain HTTP ad request host=$host app=$appName vendor=$vendor matchedRule=${matchedRule != null}",
+            minIntervalMillis = 5_000L
+        )
+        UserAdFeedbackManager.recordNetworkActivity(
+            this,
+            UserAdFeedbackManager.NetworkActivity(
+                appName = appName,
+                host = host,
+                ip = formatAddress(info.destinationAddress),
+                protocol = "HTTP",
+                source = "plain_http_block",
+                score = 10
+            )
+        )
+        return true
+    }
+
+    // 会话缓存上限控制：流量突发时防止 plainHttpCheckedFlows 无限增长
+    private fun prunePlainHttpFlowsIfNeeded() {
+        if (plainHttpCheckedFlows.size > 8192) {
+            val it = plainHttpCheckedFlows.entries.iterator()
+            var removed = 0
+            while (it.hasNext() && removed < 4096) {
+                it.next()
+                it.remove()
+                removed++
+            }
+        }
     }
 
     // 常见 TLS 端口之外，广告 SDK 偶用 8080/8883/9443 等端口；
@@ -8137,6 +8246,7 @@ class AdBlockVpnService : VpnService() {
         val now = System.currentTimeMillis()
         if (!RouteCacheMaintenanceSupport.shouldRunCheck(now, lastRouteCachePruneCheckAt)) return
         lastRouteCachePruneCheckAt = now
+        prunePlainHttpFlowsIfNeeded()
         synchronized(adIpTargetCache) {
             pruneAdIpTargetsLocked()
         }

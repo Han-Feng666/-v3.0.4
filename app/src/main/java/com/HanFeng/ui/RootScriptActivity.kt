@@ -110,7 +110,7 @@ class RootScriptActivity : BaseActivity() {
         dialogView.addView(listView)
         dialogView.addView(statusText)
 
-        val dialog = AlertDialog.Builder(this)
+        val dialog = StableDialog.builder(this)
             .setTitle("选择脚本文件")
             .setView(dialogView)
             .setNegativeButton("取消", null)

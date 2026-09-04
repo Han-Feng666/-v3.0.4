@@ -265,7 +265,7 @@ class RemoteRuleSourcesActivity : BaseActivity() {
         container.addView(nameInput)
         container.addView(urlInput)
 
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        StableDialog.builder(this)
             .setTitle(if (source == null) "添加规则源" else "编辑规则源")
             .setView(container)
             .setPositiveButton(if (source == null) "添加" else "保存", null)

@@ -28,6 +28,21 @@
             <corners android:radius="22dp" />
         </shape>
     </item>
+    <!-- 顶部液态高光：模拟玻璃对环境光的反射，增强液态玻璃质感 -->
+    <item
+        android:bottom="3dp"
+        android:left="0dp"
+        android:right="0dp"
+        android:top="0dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:centerColor="@android:color/transparent"
+                android:endColor="@android:color/transparent"
+                android:startColor="#5CFFFFFF" />
+            <corners android:radius="22dp" />
+        </shape>
+    </item>
     <!-- 底部投影 Y≈2 黑 4% -->
     <item
         android:bottom="3dp"

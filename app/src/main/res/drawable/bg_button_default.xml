@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Liquid Glass secondary button (idle)：可见玻璃体 + 边缘反光，无内部白线 -->
+<!-- Liquid Glass secondary button (idle)：可见玻璃体 + 边缘反光，无内部白线
+     底色 82%-88% 白：毛玻璃观感 + 低版本可读性兜底 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="rectangle">
             <gradient
                 android:angle="270"
-                android:centerColor="#2EFFFFFF"
-                android:endColor="#1FFFFFFF"
-                android:startColor="#42FFFFFF" />
+                android:centerColor="#D6FFFFFF"
+                android:endColor="#CDFFFFFF"
+                android:startColor="#DEFFFFFF" />
             <corners android:radius="30dp" />
         </shape>
     </item>
