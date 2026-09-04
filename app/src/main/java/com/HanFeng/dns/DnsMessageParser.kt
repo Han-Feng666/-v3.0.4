@@ -369,4 +369,52 @@ object DnsMessageParser {
     private fun readShort(buffer: ByteArray, offset: Int): Int {
         return ((buffer[offset].toInt() and 0xFF) shl 8) or (buffer[offset + 1].toInt() and 0xFF)
     }
+
+    /**
+     * 抑制应答中命中域名集合的 AAAA 记录：RDATA 原地清零为 "::" 且 TTL 置 0。
+     * 不物理删除记录（避免破坏后续记录的压缩指针），字节长度不变；
+     * 客户端拿到 "::" 会连接失败并立即回退 IPv4，从而阻断广告域名的 IPv6 直连绕过。
+     *
+     * @param targetSuffixes 需要抑制的域名（小写，精确或后缀匹配）
+     * @return 是否发生了改写
+     */
+    fun suppressAAAARecords(response: ByteArray, targetSuffixes: Set<String>): Boolean {
+        if (targetSuffixes.isEmpty() || response.size < 12) return false
+        val questionCount = readShort(response, 4)
+        val answerCount = readShort(response, 6)
+        if (answerCount <= 0) return false
+        var offset = 12
+        var ok = true
+        repeat(questionCount) {
+            if (!ok) return@repeat
+            val next = skipName(response, offset)
+            if (next == null || next + 4 > response.size) { ok = false; return@repeat }
+            offset = next + 4
+        }
+        if (!ok) return false
+        var modified = false
+        var index = 0
+        while (index < answerCount) {
+            val nameStart = offset
+            val nameEnd = skipName(response, nameStart)
+            if (nameEnd == null || nameEnd + 10 > response.size) break
+            val type = readShort(response, nameEnd)
+            val dataLength = readShort(response, nameEnd + 8)
+            val dataOffset = nameEnd + 10
+            if (dataOffset + dataLength > response.size) break
+            if (type == 28 && dataLength == 16) {
+                val name = decodeName(response, nameStart)?.trim('.')?.lowercase()
+                if (name != null && targetSuffixes.any { suffix -> name == suffix || name.endsWith(".$suffix") }) {
+                    // RDATA 清零为 :: ，TTL 置 0
+                    java.util.Arrays.fill(response, dataOffset, dataOffset + 16, 0)
+                    response[nameEnd + 4] = 0; response[nameEnd + 5] = 0
+                    response[nameEnd + 6] = 0; response[nameEnd + 7] = 0
+                    modified = true
+                }
+            }
+            offset = dataOffset + dataLength
+            index++
+        }
+        return modified
+    }
 }

@@ -15,8 +15,22 @@ class DomainTrieIndex(
     }
 
     private class TrieNode {
-        val children = HashMap<String, TrieNode>()
+        // 惰性分配：广告域名 trie 大量节点是叶子或单链，空 HashMap 每个浪费 ~48B+，
+        // 20 万级规则集下合计节省数十 MB
+        var children: HashMap<String, TrieNode>? = null
         var flags = 0
+
+        fun child(label: String): TrieNode? = children?.get(label)
+
+        fun getOrCreateChild(label: String): TrieNode {
+            var c = children?.get(label)
+            if (c == null) {
+                c = TrieNode()
+                if (children == null) children = HashMap(4)
+                children!!.put(label, c)
+            }
+            return c
+        }
     }
 
     private val root = TrieNode()
@@ -32,7 +46,7 @@ class DomainTrieIndex(
         val labels = domain.split('.')
         var node = root
         for (i in labels.indices.reversed()) {
-            node = node.children.getOrPut(labels[i]) { TrieNode() }
+            node = node.getOrCreateChild(labels[i])
         }
         node.flags = node.flags or flag
     }
@@ -49,12 +63,12 @@ class DomainTrieIndex(
         val labels = domain.split('.')
         var node = root
         for (i in labels.indices.reversed()) {
-            val specific = node.children[labels[i]]
+            val specific = node.child(labels[i])
             if (specific != null) {
                 node = specific
                 if (predicate(node)) return true
             } else {
-                node = node.children[WILDCARD_LABEL] ?: return false
+                node = node.child(WILDCARD_LABEL) ?: return false
                 if (predicate(node)) return true
             }
         }

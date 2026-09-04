@@ -4,7 +4,6 @@ import android.content.Context
 import com.HanFeng.core.network.UserAdFeedbackManager
 import com.HanFeng.core.network.RegexCache
 import com.HanFeng.core.network.StealthModeSupport
-import com.HanFeng.core.network.AdRewardInterceptor
 import com.HanFeng.data.FeatureSettingsRepository
 import com.HanFeng.data.RuleRepository
 import org.brotli.dec.BrotliInputStream
@@ -1175,65 +1174,12 @@ object HttpMitmFilter {
         0x3B.toByte()
     )
 
-    private fun tryReplaceBinaryAdContent(
-        session: TlsMitmSessionManager.TlsMitmSession,
-        chunk: ByteArray,
-        requestInspection: RequestInspection?
-    ): FilterResult? {
-        val context = TlsMitmSessionManager.getContextOrNull() ?: return null
-        if (!FeatureSettingsRepository.isAdFreeRewardEnabled(context)) return null
-        val host = normalizeAuthority(requestInspection?.host ?: session.host)
-        if (RuleRepository.isWhitelistedDomain(host)) return null
-        if (RuleRepository.isSensitiveAuthDomain(host)) return null
-        val vendor = RuleRepository.classifyVendorFromHints(context, host, session.appName)
-        val lowerPath = requestInspection?.path?.lowercase().orEmpty()
-        val adMaterialPathHit = adMaterialPathTokens.any(lowerPath::contains)
-        if (!RuleRepository.looksLikeAdSdkInfraDomain(host, vendor) &&
-            !RuleRepository.looksLikeAdDomain(host) &&
-            !RuleRepository.shouldTreatAsGeneralAdTraffic(host, vendor, session.appName) &&
-            !adMaterialPathHit) return null
-        val headerEnd = findHttpHeaderEnd(chunk)
-        if (headerEnd <= 0) return null
-        val headerText = String(chunk, 0, headerEnd, StandardCharsets.ISO_8859_1)
-        val contentTypeLine = headerText.lines().firstOrNull {
-            it.startsWith("Content-Type:", ignoreCase = true)
-        } ?: return null
-        val contentType = contentTypeLine.substringAfter(':').trim().lowercase()
-        val replacement = when {
-            contentType.startsWith("image/") ->
-                FilterResult.Replaced(
-                    buildSyntheticResponse("HTTP/1.1 200 OK", contentType, TRANSPARENT_1X1_GIF),
-                    "neutralized-binary-image-reward",
-                    chunk.size
-                )
-            contentType.startsWith("video/") || contentType.contains("mpegurl") ||
-                contentType.contains("dash") || contentType.contains("mp4") ->
-                FilterResult.Replaced(
-                    buildSyntheticResponse("HTTP/1.1 200 OK", contentType, ByteArray(0)),
-                    "neutralized-binary-video-reward",
-                    chunk.size
-                )
-            contentType.startsWith("audio/") ->
-                FilterResult.Replaced(
-                    buildSyntheticResponse("HTTP/1.1 200 OK", contentType, ByteArray(0)),
-                    "neutralized-binary-audio-reward",
-                    chunk.size
-                )
-            else -> null
-        }
-        if (replacement != null) {
-            return replacement
-        }
-        return null
-    }
-
     private fun tryBlockAdBinaryByMagic(
         session: TlsMitmSessionManager.TlsMitmSession,
         chunk: ByteArray,
         requestInspection: RequestInspection?
     ): FilterResult? {
         val context = TlsMitmSessionManager.getContextOrNull() ?: return null
-        if (FeatureSettingsRepository.isAdFreeRewardEnabled(context)) return null
         val host = normalizeAuthority(requestInspection?.host ?: session.host)
         if (RuleRepository.isWhitelistedDomain(host)) return null
         if (RuleRepository.isSensitiveAuthDomain(host)) return null
@@ -1613,8 +1559,6 @@ object HttpMitmFilter {
     ): FilterResult {
         val text = decodeAscii(chunk)
         if (text == null) {
-            val binaryReplacement = tryReplaceBinaryAdContent(session, chunk, requestInspection)
-            if (binaryReplacement != null) return binaryReplacement
             val magicBlock = tryBlockAdBinaryByMagic(session, chunk, requestInspection)
             if (magicBlock != null) return magicBlock
             return FilterResult.PassThrough(chunk, "binary-response")
@@ -1671,8 +1615,6 @@ object HttpMitmFilter {
             ?: return buildDecodeFailureResult(modifiedChunk, responseHeaders.contentEncoding)
         // 真实二进制探测：图片/视频等二进制广告素材走替换/魔数拦截链路，避免以乱码形态进入文本信号检测
         if (looksLikeBinaryBody(decodedBodyBytes)) {
-            val binaryReplacement = tryReplaceBinaryAdContent(session, modifiedChunk, requestInspection)
-            if (binaryReplacement != null) return binaryReplacement
             val magicBlock = tryBlockAdBinaryByMagic(session, modifiedChunk, requestInspection)
             if (magicBlock != null) return magicBlock
             return FilterResult.PassThrough(modifiedChunk, "binary-response-body")
@@ -1794,12 +1736,6 @@ object HttpMitmFilter {
             domain = requestInspection?.host ?: session.host,
             path = requestInspection?.path ?: ""
         )
-        if (neutralizeReason.contains("reward", ignoreCase = true)) {
-            val context = TlsMitmSessionManager.getContextOrNull()
-            if (context != null && FeatureSettingsRepository.isAdFreeRewardEnabled(context)) {
-                FeatureSettingsRepository.recordAdRewardIntercept(context)
-            }
-        }
         val response = buildSyntheticResponse(responseHeaders.statusLine, contentType, replacementBodyBytes, directives.cspValue)
         return FilterResult.Replaced(response, neutralizeReason, chunk.size, directives.matchedRuleSummaries)
     }
@@ -2070,19 +2006,6 @@ object HttpMitmFilter {
             )
         }
 
-        if (lowerType.contains("json") && body.contains("reward", ignoreCase = true)) {
-            val sdk = AdRewardInterceptor.identifyRewardSdk("", "", body)
-            if (sdk != null) {
-                val rewardType = AdRewardInterceptor.detectRewardTypeFromBody(body)
-                val fakeResponse = AdRewardInterceptor.generateFakeAdCompleteResponse(sdk, rewardType)
-                return Http2BodyRewriteResult(
-                    body = fakeResponse.toByteArray(StandardCharsets.UTF_8),
-                    contentType = "application/json",
-                    reason = "neutralized-reward-callback:${sdk.name}"
-                )
-            }
-        }
-
         val scrubbedBody = scrubHtmlAdArtifacts(lowerType, body)
         val replacedBody = applyReplaceRules(lowerType, scrubbedBody, directives.replaceRules)
         var rewrittenBody = replacedBody ?: scrubbedBody
@@ -2319,17 +2242,14 @@ object HttpMitmFilter {
             ) "deep-inspection-target-sniff" else null
         }
         val targetedContentType = containsAnyContentType(contentType, "text/html", "json", "javascript")
-        val adRewardContentType = FeatureSettingsRepository.isAdFreeRewardEnabled(
-            TlsMitmSessionManager.getContextOrNull() ?: return null
-        ) && containsAnyContentType(contentType, "xml", "mpegurl", "vnd.apple.mpegurl", "dash+xml", "mpd")
-        if (!targetedContentType && !adRewardContentType) return null
+        if (!targetedContentType) return null
         val shouldInspect = shouldPreferDeepInspection(
             host = host,
             path = requestInspection?.path,
             appName = session.appName,
             requestDomain = extractRequestDomain(requestInspection)
         )
-        return if (shouldInspect || adRewardContentType) "deep-inspection-target" else null
+        return if (shouldInspect) "deep-inspection-target" else null
     }
 
     private fun inspectHttp1BodySignals(
@@ -2344,9 +2264,7 @@ object HttpMitmFilter {
         val mitmAggressive = isMitmAggressiveMode()
         val htmlContent = contentType.contains("html")
         val scriptOrJsonContent = containsAnyContentType(contentType, "json", "javascript")
-        val adRewardContent = FeatureSettingsRepository.isAdFreeRewardEnabled(environment.context) &&
-            containsAnyContentType(contentType, "xml", "mpegurl", "vnd.apple.mpegurl", "dash+xml", "mpd")
-        val targetedBodyContent = htmlContent || scriptOrJsonContent || adRewardContent
+        val targetedBodyContent = htmlContent || scriptOrJsonContent
         if (htmlContent && cosmeticSelectors.isNotEmpty()) {
             return "neutralized-cosmetic-rule"
         }
@@ -2425,16 +2343,6 @@ object HttpMitmFilter {
         commentSignals: CommentAdBodySignals
     ): String? {
         val context = environment.context
-        if (FeatureSettingsRepository.isAdFreeRewardEnabled(context)) {
-            val genericRewardHit = tryDetectGenericRewardCallback(
-                host = environment.host,
-                bodySignalScore = bodySignalScore,
-                novelSignals = novelSignals
-            )
-            if (genericRewardHit != null) {
-                return genericRewardHit
-            }
-        }
         inspectBodyClusterBranch(
             clusterSignals = clusterSignals,
             bodySignalScore = bodySignalScore
@@ -2456,33 +2364,6 @@ object HttpMitmFilter {
         )?.let { return it }
         inspectNovelAdBodyBranch(decisionContext = bodyDecisionContext)?.let { return it }
         return inspectGeneralAdBodyBranch(decisionContext = bodyDecisionContext)
-    }
-
-    private fun tryDetectGenericRewardCallback(
-        host: String,
-        bodySignalScore: Int,
-        novelSignals: NovelBodySignals
-    ): String? {
-        val lowerHost = host.lowercase()
-
-        val isRewardDomain = AdRewardInterceptor.isRewardAdDomain(lowerHost)
-        val hasRewardField = novelSignals.rewardUnlockHits > 0 ||
-            novelSignals.rewardCompletionHits > 0 ||
-            novelSignals.vastAdHit ||
-            novelSignals.gameRewardAdHit
-
-        if (isRewardDomain || hasRewardField) {
-            if (bodySignalScore >= 1 || hasRewardField) {
-                val sdk = AdRewardInterceptor.identifyRewardSdk(lowerHost, "", "")
-                if (sdk != null) {
-                    FeatureSettingsRepository.recordAdRewardIntercept(TlsMitmSessionManager.getContextOrNull() ?: return null)
-                    return "neutralized-generic-reward-callback:${sdk.name}"
-                }
-                return "neutralized-generic-reward-callback:detected"
-            }
-        }
-
-        return null
     }
 
     private fun resolveHttp1HeaderEnvironment(
@@ -2780,13 +2661,6 @@ object HttpMitmFilter {
         vendor: String,
         context: android.content.Context
     ): String? {
-        val adFreeRewardEnabled = FeatureSettingsRepository.isAdFreeRewardEnabled(context)
-        if (adFreeRewardEnabled) {
-            if (novelSignals.rewardUnlockHits >= 1 || novelSignals.rewardCompletionHits >= 1 || isGameApp ||
-                novelSignals.vastAdHit || novelSignals.gameRewardAdHit) {
-                return "neutralized-body-reward-unlock"
-            }
-        }
         if (novelSignals.rewardCompletionHits >= 2 && (isGameApp || protectedNovelTarget || aggressiveNovelTarget || bodySignalScore >= 1)) {
             return "neutralized-body-reward-completion"
         }
@@ -3958,27 +3832,17 @@ object HttpMitmFilter {
         path: String = ""
     ): ByteArray {
         val lowerType = contentType.lowercase()
-        if (reason.contains("reward", ignoreCase = true)) {
-            val sdk = AdRewardInterceptor.identifyRewardSdk(domain, path, originalBody)
-            if (sdk != null) {
-                val rewardType = AdRewardInterceptor.detectRewardTypeFromPath(path)
-                    .let { if (it == AdRewardInterceptor.RewardType.COIN) AdRewardInterceptor.detectRewardTypeFromBody(originalBody) else it }
-                val fakeResponse = AdRewardInterceptor.generateFakeAdCompleteResponse(sdk, rewardType)
-                return fakeResponse.toByteArray(StandardCharsets.UTF_8)
-            }
-            return when {
-                lowerType.contains("json") ->
-                    "{\"code\":0,\"errcode\":0,\"success\":true,\"completed\":true,\"rewarded\":true,\"is_ended\":true,\"reward_granted\":true}".toByteArray(StandardCharsets.UTF_8)
-                lowerType.contains("mpegurl") || lowerType.contains("vnd.apple.mpegurl") ->
-                    "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:0\n#EXT-X-ENDLIST\n".toByteArray(StandardCharsets.UTF_8)
-                lowerType.contains("dash+xml") || lowerType.contains("mpd") ->
-                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><MPD type=\"static\"></MPD>".toByteArray(StandardCharsets.UTF_8)
-                lowerType.contains("xml") ->
-                    "<VAST version=\"3.0\"></VAST>".toByteArray(StandardCharsets.UTF_8)
-                else -> buildReplacementBody(contentType, originalBody, cosmeticSelectors, cspValue, jsInjectRules)
-            }
+        return when {
+            lowerType.contains("json") ->
+                "{\"code\":0,\"errcode\":0,\"success\":true,\"completed\":true,\"rewarded\":true,\"is_ended\":true,\"reward_granted\":true}".toByteArray(StandardCharsets.UTF_8)
+            lowerType.contains("mpegurl") || lowerType.contains("vnd.apple.mpegurl") ->
+                "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:0\n#EXT-X-ENDLIST\n".toByteArray(StandardCharsets.UTF_8)
+            lowerType.contains("dash+xml") || lowerType.contains("mpd") ->
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?><MPD type=\"static\"></MPD>".toByteArray(StandardCharsets.UTF_8)
+            lowerType.contains("xml") ->
+                "<VAST version=\"3.0\"></VAST>".toByteArray(StandardCharsets.UTF_8)
+            else -> buildReplacementBody(contentType, originalBody, cosmeticSelectors, cspValue, jsInjectRules)
         }
-        return buildReplacementBody(contentType, originalBody, cosmeticSelectors, cspValue, jsInjectRules)
     }
 
     private fun buildReplacementBody(

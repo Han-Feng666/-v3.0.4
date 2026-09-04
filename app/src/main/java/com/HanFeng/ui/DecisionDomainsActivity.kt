@@ -9,6 +9,8 @@ import android.view.ViewGroup
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.isVisible
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.lifecycleScope
@@ -72,6 +74,35 @@ class DecisionDomainsActivity : BaseActivity() {
         binding.btnFilterAll.setOnClickListener {
             filter = null
             applyFilters()
+        }
+        // 学习域名一键入库：把 MITM/流量学习引擎命中的域名持久化为用户拦截规则
+        val learnedCount = runCatching {
+            com.HanFeng.core.network.ScoredBlockCache.exportLearnedDomains().size
+        }.getOrDefault(0)
+        if (learnedCount > 0) {
+            binding.btnPersistLearned.isVisible = true
+            binding.btnPersistLearned.text = "学习域名一键入库（$learnedCount 条）"
+            binding.btnPersistLearned.setOnClickListener {
+                StableDialog.builder(this)
+                    .setTitle("学习域名入库")
+                    .setMessage("将 $learnedCount 条学习命中的域名持久保存为拦截规则？入库后即使学习缓存过期也继续拦截。")
+                    .setPositiveButton("入库") { _, _ ->
+                        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            val added = runCatching {
+                                com.HanFeng.core.network.ScoredBlockCache.persistLearnedDomainsToRules(applicationContext)
+                            }.getOrDefault(0)
+                            launch(kotlinx.coroutines.Dispatchers.Main) {
+                                Toast.makeText(
+                                    this@DecisionDomainsActivity,
+                                    if (added > 0) "已入库 $added 条学习域名规则" else "没有新增规则（可能已存在）",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    }
+                    .setNegativeButton("取消", null)
+                    .showSafely(this, "persist-learned-dialog")
+            }
         }
         binding.btnFilterBlocked.setOnClickListener {
             filter = LogRepository.DomainDecisionType.BLOCKED

@@ -22,9 +22,6 @@ object FeatureSettingsRepository {
     private const val KEY_CUSTOM_TRACKING_PARAMS = "custom_tracking_params"
     private const val KEY_CUSTOM_TRACKING_HEADERS = "custom_tracking_headers"
     private const val KEY_PENDING_FEEDBACK_RULES = "pending_feedback_rules"
-    private const val KEY_AD_FREE_REWARD_ENABLED = "ad_free_reward_enabled"
-    private const val KEY_AD_REWARD_INTERCEPT_COUNT = "ad_reward_intercept_count"
-    private const val KEY_AD_REWARD_INTERCEPT_TODAY = "ad_reward_intercept_today"
     private const val KEY_HOTSPOT_BLOCK_ENABLED = "hotspot_block_enabled"
     private const val KEY_HOTSPOT_BLOCK_MODE = "hotspot_block_mode"
     private const val KEY_HOTSPOT_BLOCKED_COUNT = "hotspot_blocked_count"
@@ -40,7 +37,6 @@ object FeatureSettingsRepository {
     private const val KEY_NOTIFICATION_AD_BLOCK_KEYWORDS = "notification_ad_block_keywords"
     private const val MAX_PENDING_FEEDBACK_RULES = 50
     private val gson = Gson()
-    @Volatile private var cachedAdFreeRewardEnabled: Boolean? = null
     @Volatile private var cachedAdBlockEnabled: Boolean? = null
     @Volatile private var cachedHttpDecryptEnabled: Boolean? = null
     @Volatile private var cachedVpnRevokedByOtherVpn: Boolean? = null
@@ -274,55 +270,6 @@ object FeatureSettingsRepository {
 
     fun removePendingFeedbackRule(context: Context, id: String) {
         savePendingFeedbackRules(context, getPendingFeedbackRules(context).filterNot { it.id == id })
-    }
-
-    fun isAdFreeRewardEnabled(context: Context): Boolean {
-        cachedAdFreeRewardEnabled?.let { return it }
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_AD_FREE_REWARD_ENABLED, false)
-            .also { cachedAdFreeRewardEnabled = it }
-    }
-
-    fun setAdFreeRewardEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_AD_FREE_REWARD_ENABLED, enabled)
-            .apply()
-        cachedAdFreeRewardEnabled = enabled
-    }
-
-    fun getAdRewardInterceptCount(context: Context): Long {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getLong(KEY_AD_REWARD_INTERCEPT_COUNT, 0)
-    }
-
-    fun incrementAdRewardInterceptCount(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val count = prefs.getLong(KEY_AD_REWARD_INTERCEPT_COUNT, 0) + 1
-        prefs.edit().putLong(KEY_AD_REWARD_INTERCEPT_COUNT, count).apply()
-    }
-
-    fun getAdRewardInterceptToday(context: Context): Long {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val today = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.getDefault())
-            .format(java.util.Date())
-        val stored = prefs.getString(KEY_AD_REWARD_INTERCEPT_TODAY, "") ?: ""
-        return if (stored.startsWith("$today|")) {
-            stored.substringAfter("|").toLongOrNull() ?: 0
-        } else 0
-    }
-
-    fun incrementAdRewardInterceptToday(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val today = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.getDefault())
-            .format(java.util.Date())
-        val count = getAdRewardInterceptToday(context) + 1
-        prefs.edit().putString(KEY_AD_REWARD_INTERCEPT_TODAY, "$today|$count").apply()
-    }
-
-    fun recordAdRewardIntercept(context: Context) {
-        incrementAdRewardInterceptCount(context)
-        incrementAdRewardInterceptToday(context)
     }
 
     fun isHotspotBlockEnabled(context: Context): Boolean {

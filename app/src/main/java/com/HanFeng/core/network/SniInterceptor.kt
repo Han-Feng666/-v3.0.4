@@ -66,24 +66,6 @@ object SniInterceptor {
 
         val slowPathStartedAt = System.nanoTime()
 
-        // 免广告领奖励模式：激励视频 SDK 域名普遍在规则库中，规则命中若先生效开关就形同虚设。
-        // 仅放行明确奖励语义域名（与 AdBlockVpnService.looksLikeAdFreeRewardDomain 的
-        // 宽松入口一致：reward/incentiv 单词命中），白名单/鉴权域名不受影响
-        val adFreeRewardEnabled = runCatching {
-            com.HanFeng.data.FeatureSettingsRepository.isAdFreeRewardEnabled(context)
-        }.getOrDefault(false)
-        val lowerHost = sniHost.lowercase()
-        if (adFreeRewardEnabled &&
-            (lowerHost.contains("reward") || lowerHost.contains("incentiv")) &&
-            !RuleRepository.isWhitelistedDomain(sniHost) &&
-            !RuleRepository.isSensitiveAuthDomain(sniHost)
-        ) {
-            return makeDecision(false, sniHost, "", "adfree-reward-pass").also {
-                cacheDecision(cacheKey, it)
-                recordSlowPathLatency(slowPathStartedAt)
-            }
-        }
-
         // 域名快速排除：社交核心 / 白名单（在这两步命中时不需要 vendor 分类）
         if (RuleRepository.isSocialCoreDomain(sniHost)) {
             return makeDecision(false, sniHost, "", "social-core").also {

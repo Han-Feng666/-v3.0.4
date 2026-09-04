@@ -80,8 +80,6 @@ class SettingsActivity : BaseActivity() {
     private lateinit var switchStealthStripParams: Switch
     private lateinit var switchStealthHideReferer: Switch
     private lateinit var switchStealthRemoveFingerprintHeaders: Switch
-    private lateinit var switchAdFreeReward: Switch
-    private lateinit var textAdFreeRewardDesc: TextView
     private lateinit var btnManageCustomTrackingParams: Button
     private lateinit var textCustomTrackingParamsPreview: TextView
     private lateinit var btnManageCustomTrackingHeaders: Button
@@ -97,8 +95,6 @@ private lateinit var btnGameAntiMark: Button
     private lateinit var btnResetHideBackground: Button
     private lateinit var btnExportLogs: Button
     private lateinit var btnExportRules: Button
-    private lateinit var btnJoinGroupSettings: Button
-    private lateinit var btnTrafficCardSettings: Button
     private lateinit var btnCoexistSettings: Button
     private lateinit var btnModifyDeviceId: Button
     private lateinit var btnModifySerial: Button
@@ -182,8 +178,6 @@ private lateinit var btnGameAntiMark: Button
         switchStealthStripParams = findViewById(R.id.switchStealthStripParams)
         switchStealthHideReferer = findViewById(R.id.switchStealthHideReferer)
         switchStealthRemoveFingerprintHeaders = findViewById(R.id.switchStealthRemoveFingerprintHeaders)
-        switchAdFreeReward = findViewById(R.id.switchAdFreeReward)
-        textAdFreeRewardDesc = findViewById(R.id.textAdFreeRewardDesc)
         btnManageCustomTrackingParams = findViewById(R.id.btnManageCustomTrackingParams)
         textCustomTrackingParamsPreview = findViewById(R.id.textCustomTrackingParamsPreview)
         btnManageCustomTrackingHeaders = findViewById(R.id.btnManageCustomTrackingHeaders)
@@ -215,8 +209,6 @@ btnGameAntiMark = findViewById(R.id.btnGameAntiMark)
         btnResetHideBackground = findViewById(R.id.btnResetHideBackground)
         btnExportLogs = findViewById(R.id.btnExportLogs)
         btnExportRules = findViewById(R.id.btnExportRules)
-        btnJoinGroupSettings = findViewById(R.id.btnJoinGroupSettings)
-        btnTrafficCardSettings = findViewById(R.id.btnTrafficCardSettings)
         btnCoexistSettings = findViewById(R.id.btnCoexistSettings)
         cbAutoInstallSystemCert = findViewById(R.id.cbAutoInstallSystemCert)
 
@@ -258,7 +250,6 @@ btnGameAntiMark = findViewById(R.id.btnGameAntiMark)
         switchStealthStripParams.isChecked = FeatureSettingsRepository.isStealthStripTrackingParamsEnabled(this)
         switchStealthHideReferer.isChecked = FeatureSettingsRepository.isStealthHideRefererEnabled(this)
         switchStealthRemoveFingerprintHeaders.isChecked = FeatureSettingsRepository.isStealthRemoveFingerprintHeadersEnabled(this)
-        switchAdFreeReward.isChecked = FeatureSettingsRepository.isAdFreeRewardEnabled(this)
 
         switchHideBackground.setOnCheckedChangeListener { _, isChecked ->
             AppSettingsRepository.setHideBackgroundEnabled(this, isChecked)
@@ -292,8 +283,6 @@ btnGameAntiMark = findViewById(R.id.btnGameAntiMark)
         switchStealthRemoveFingerprintHeaders.setOnCheckedChangeListener { _, isChecked ->
             FeatureSettingsRepository.setStealthRemoveFingerprintHeadersEnabled(this, isChecked)
         }
-        switchAdFreeReward.setOnCheckedChangeListener(createAdFreeRewardListener())
-
         refreshCustomBackgroundPreview()
         btnChooseBackground.setOnClickListener {
             chooseBackgroundImage()
@@ -407,12 +396,6 @@ btnGameAntiMark = findViewById(R.id.btnGameAntiMark)
                 failureMessage = "打开共存设置失败"
             )
         }
-        btnTrafficCardSettings.setOnClickListener {
-            openJoinGroupPage()
-        }
-        btnJoinGroupSettings.setOnClickListener {
-            openJoinGroupPage()
-        }
         btnExportLogs.setOnClickListener {
             exportLogsToUser()
         }
@@ -516,7 +499,6 @@ btnRootHide.setOnClickListener {
         super.onResume()
         syncHideBackgroundSwitch()
         syncStealthModeSwitch()
-        syncAdFreeRewardSwitch()
         refreshCustomBackgroundPreview()
         refreshNotificationAccessHintAsync()
 syncWeakNetDesc()
@@ -683,22 +665,6 @@ syncWeakNetDesc()
         }
     }
 
-    private fun syncAdFreeRewardSwitch() {
-        val enabled = FeatureSettingsRepository.isAdFreeRewardEnabled(this)
-        if (switchAdFreeReward.isChecked == enabled) return
-        switchAdFreeReward.setOnCheckedChangeListener(null)
-        switchAdFreeReward.isChecked = enabled
-        switchAdFreeReward.setOnCheckedChangeListener(createAdFreeRewardListener())
-    }
-
-    // 开关切换需同步热重载拦截内核才即时生效，onCreate 与 sync 重挂必须复用同一实现
-    private fun createAdFreeRewardListener(): android.widget.CompoundButton.OnCheckedChangeListener {
-        return android.widget.CompoundButton.OnCheckedChangeListener { _, isChecked ->
-            FeatureSettingsRepository.setAdFreeRewardEnabled(this, isChecked)
-            com.HanFeng.core.network.NetworkKernel.reloadIfRunning(this)
-        }
-    }
-
     private fun refreshCustomTrackingPreviews() {
         val params = FeatureSettingsRepository.getCustomTrackingParams(this)
         if (params.isNotEmpty()) {
@@ -820,23 +786,6 @@ syncWeakNetDesc()
             }
             .setNegativeButton("取消", null)
             .showSafely(this, "Show add custom header dialog failed")
-    }
-
-    private fun openJoinGroupPage() {
-        runCatching {
-            startActivity(
-                Intent(
-                    Intent.ACTION_VIEW,
-                    Uri.parse("mqqapi://card/show_pslcard?src_type=internal&version=1&uin=573309536&card_type=group&source=qrcode")
-                )
-            )
-        }.onFailure {
-            LogRepository.append(this, "Show join group failed: ${it.message}")
-            showMessageDialog(
-                message = "未找到可用的 QQ 客户端，请先安装 QQ",
-                errorTag = "Show join group unavailable dialog failed"
-            )
-        }
     }
 
     private fun exportLogsToUser() {

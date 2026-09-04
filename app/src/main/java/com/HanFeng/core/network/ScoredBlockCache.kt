@@ -3,6 +3,7 @@ package com.HanFeng.core.network
 import android.content.Context
 import android.content.SharedPreferences
 import com.HanFeng.data.RuleRepository
+import com.HanFeng.model.RuleSource
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -152,6 +153,30 @@ object ScoredBlockCache {
     }
 
     data class Snapshot(val domainCount: Int, val ipCount: Int)
+
+    data class LearnedDomain(val domain: String, val vendor: String, val score: Int, val reason: String, val expiresAt: Long)
+
+    /** 导出全部学习命中域名（未过期），供一键入库为持久拦截规则 */
+    fun exportLearnedDomains(): List<LearnedDomain> {
+        val now = System.currentTimeMillis()
+        return domainBlocks.entries
+            .filter { it.value.expiresAt > now }
+            .map { (domain, e) -> LearnedDomain(domain, e.vendor, e.score, e.reason, e.expiresAt) }
+            .sortedByDescending { it.score }
+    }
+
+    /** 把学习域名持久入库为用户规则；返回成功条数 */
+    fun persistLearnedDomainsToRules(context: android.content.Context): Int {
+        val learned = exportLearnedDomains()
+        if (learned.isEmpty()) return 0
+        var added = 0
+        learned.forEach { item ->
+            val rule = RuleRepository.addRule(context, item.domain, RuleSource.IMPORTED)
+            if (rule != null) added++
+        }
+        if (added > 0) save()
+        return added
+    }
 
     fun pruneIfNeeded() {
         val now = System.currentTimeMillis()

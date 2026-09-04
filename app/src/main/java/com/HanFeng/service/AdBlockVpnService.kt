@@ -1745,6 +1745,12 @@ class AdBlockVpnService : VpnService() {
         output: FileOutputStream,
         isUdp: Boolean
     ): Boolean {
+        // TCP 53（DNS over TCP）：大响应截断回退/DoT 场景下客户端会改走 TCP，
+        // 完全绕过 UDP 通道的域名规则。首包即完整查询（查询很小），解析后命中规则直接 RST，
+        // 未命中放行走 passthrough。与 SNI 拦截同款模式，不改变任何 DNS 语义
+        if (!isUdp && info.destinationPort == 53) {
+            return handleTcpDnsPacket(info)
+        }
         if (!(isUdp && info.destinationPort == 53)) return false
         VpnHealthChecker.onDnsQuery(this)
         if (!shouldHandleDns(info.destinationAddress)) {
@@ -1795,6 +1801,80 @@ class AdBlockVpnService : VpnService() {
 
     // 异步路径用：worker 调用 queryUpstreamDns 等全部阻塞逻辑
     // 主线程消费队列结果写入 TUN，见 drainDnsAsyncResults / handleDnsAsyncResult
+
+    // TCP DNS 会话去重：每个 flowKey 只判首个带 payload 的包
+    private val tcpDnsCheckedFlows = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    /**
+     * DNS over TCP 拦截：解析首包查询（2 字节长度前缀 + DNS 报文），
+     * 域名命中规则即 RST 断连；未命中返回 false 走 passthrough。
+     * 不重组流、不改写响应——只拦截已知广告域名的查询，误伤面为零。
+     */
+    private fun handleTcpDnsPacket(info: com.HanFeng.model.PacketInfo): Boolean {
+        val payload = info.payload
+        if (payload.size < 18) return false  // 2 字节长度前缀 + 最小 DNS 头 12 + 最小 question 4
+        val flowKey = buildCacheKeys(info).flowKey
+        if (tcpDnsCheckedFlows.containsKey(flowKey)) return false
+        // DNS over TCP 报文前缀 = 报文长度（不含前缀自身），校验合法性避免误判普通 TCP 流
+        val declaredLength = ((payload[0].toInt() and 0xFF) shl 8) or (payload[1].toInt() and 0xFF)
+        if (declaredLength < 12 || declaredLength > 512 || declaredLength > payload.size - 2) {
+            tcpDnsCheckedFlows[flowKey] = false
+            return false
+        }
+        val dnsPayload = payload.copyOfRange(2, 2 + declaredLength)
+        val question = runCatching { DnsMessageParser.parseQuestion(dnsPayload) }.getOrNull()
+        tcpDnsCheckedFlows[flowKey] = true
+        if (question == null) return false
+        if (isProtectedTrafficDomain(question.domain) ||
+            RuleRepository.isWhitelistedDomain(question.domain) ||
+            RuleRepository.isSensitiveAuthDomain(question.domain)
+        ) return false
+        val domainContext = resolveDomainDecisionContext(
+            domain = question.domain,
+            info = info,
+            qType = question.qType
+        )
+        val appName = domainContext.appName
+        val vendor = domainContext.vendor
+        val isAd = domainContext.matchedRule != null ||
+            RuleRepository.looksLikeAdSdkInfraDomain(question.domain, vendor) ||
+            RuleRepository.looksLikeAdDomain(question.domain) ||
+            RuleRepository.shouldTreatAsGeneralAdTraffic(question.domain, vendor, appName)
+        if (!isAd) return false
+        writeTcpRst(info)
+        StatsRepository.recordBlockedAuto(this, vendor.ifBlank { "TCP-DNS" }, appName, question.domain, 0, StatsRepository.BlockSource.DNS_RULE, StatsRepository.ProtocolHint.DNS)
+        logDecisionOnce(
+            key = "tcp-dns-block:${question.domain}:$appName",
+            message = "Blocked DNS over TCP query domain=${question.domain} app=$appName vendor=$vendor",
+            minIntervalMillis = 5_000L
+        )
+        maybePruneTcpDnsFlows()
+        return true
+    }
+
+    private fun maybePruneTcpDnsFlows() {
+        if (tcpDnsCheckedFlows.size > 8192) {
+            val it = tcpDnsCheckedFlows.entries.iterator()
+            var removed = 0
+            while (it.hasNext() && removed < 4096) {
+                it.next()
+                it.remove()
+                removed++
+            }
+        }
+    }
+
+    /** SNI 分段缓冲定期清理：只保留近期活跃流，防止半开连接累积占内存 */
+    private fun pruneSniReassemblyBuffers() {
+        if (sniReassemblyBuffers.size <= 256) return
+        val it = sniReassemblyBuffers.entries.iterator()
+        var removed = 0
+        while (it.hasNext() && removed < 256) {
+            it.next()
+            it.remove()
+            removed++
+        }
+    }
 
     private fun handlePassThroughDnsQuery(
         info: com.HanFeng.model.PacketInfo,
@@ -1874,159 +1954,6 @@ class AdBlockVpnService : VpnService() {
         }
     }
 
-    private val adFreeRewardDomainTokens = listOf(
-        "reward_verify", "rewardverify", "reward_confirm", "rewardconfirm",
-        "reward_callback", "rewardcallback", "reward_report", "rewardreport",
-        "reward_unlock", "rewardunlock", "unlock_by_ad", "unlockbyad",
-        "ad_reward", "adreward", "verify_reward", "verifyreward",
-        "callback_reward", "callbackreward", "watch_ad_unlock", "watchadunlock",
-        "chapter_unlock", "chapterunlock", "reward_complete", "rewardcomplete",
-        "reward_finish", "rewardfinish", "reward_success", "rewardsuccess",
-        "reward_grant", "rewardgrant", "grant_reward", "grantreward",
-        "reward_claim", "rewardclaim", "claim_reward", "claimreward",
-        "rewarded_complete", "rewardedcomplete", "rewarded_finish", "rewardedfinish",
-        "incentive_complete", "incentivecomplete", "inspire_complete", "inspirecomplete",
-        "s2s_callback", "s2scallback", "server_callback", "servercallback",
-        "postback_reward", "postbackreward", "server_to_server", "servertoserver",
-        "reward_notify", "rewardnotify", "reward_verify_callback", "rewardverifycallback",
-        "ad_complete_callback", "adcompletecallback", "video_complete", "videocomplete",
-        "reward_video_complete", "rewardvideocomplete", "incentive_video", "incentivevideo",
-        "offer_complete", "offercomplete", "offer_wall", "offerwall",
-        "task_complete", "taskcomplete", "task_reward", "taskreward",
-        "survey_complete", "surveycomplete", "survey_reward", "surveyreward",
-        "install_callback", "installcallback", "click_callback", "clickcallback",
-        "conversion_callback", "conversioncallback", "attribution_callback", "attributioncallback",
-        "event_callback", "eventcallback", "log_event", "logevent",
-        "reward_event", "rewardevent", "earn_event", "earnevent",
-        "coin_reward", "coinreward", "cash_reward", "cashreward",
-        "point_reward", "pointreward", "score_reward", "scorereward",
-        "diamond_reward", "diamondreward", "gold_reward", "goldreward",
-        "gift_reward", "giftreward", "bonus_reward", "bonusreward",
-        "prize_grant", "prizegrant", "lottery_reward", "lotteryreward",
-        "spin_reward", "spinreward", "wheel_reward", "wheelreward",
-        "daily_reward", "dailyreward", "checkin_reward", "checkinreward",
-        "login_reward", "loginreward", "share_reward", "sharereward",
-        "invite_reward", "invitereward", "referral_reward", "referralreward",
-        "level_reward", "levelreward", "achievement_reward", "achievementreward",
-        "milestone_reward", "milestonereward", "combo_reward", "comboreward",
-        "incentive_complete", "incentivecomplete", "inspire_complete", "inspirecomplete",
-        "s2s_verified", "s2sverified", "server_verified", "serververified",
-        "postback_success", "postbacksuccess", "callback_success", "callbacksuccess",
-        "install_verified", "installverified", "click_verified", "clickverified",
-        "conversion_verified", "conversionverified", "attribution_verified", "attributionverified",
-        "task_complete", "taskcomplete", "survey_complete", "surveycomplete",
-        "offer_complete", "offercomplete", "milestone_complete", "milestonecomplete",
-        "daily_complete", "dailycomplete", "checkin_complete", "checkincomplete",
-        "sign_complete", "signcomplete", "share_complete", "sharecomplete",
-        "invite_complete", "invitecomplete", "referral_complete", "referralcomplete",
-        "spin_complete", "spincomplete", "wheel_complete", "wheelcomplete",
-        "lottery_complete", "lotterycomplete", "draw_complete", "drawcomplete",
-        "redpacket_complete", "redpacketcomplete", "hongbao_complete", "hongbaocomplete",
-        "level_complete", "levelcomplete", "achievement_complete", "achievementcomplete",
-        "combo_complete", "combocomplete", "chest_opened", "chestopened",
-        "box_opened", "boxopened", "pack_opened", "packopened",
-        "loot_received", "lootreceived", "card_received", "cardreceived",
-        "ticket_received", "ticketreceived", "key_received", "keyreceived",
-        "token_received", "tokenreceived", "badge_received", "badgereceived",
-        "energy_full", "energyfull", "stamina_full", "staminafull",
-        "lives_full", "livesfull", "hearts_full", "heartsfull",
-        "hp_full", "hpfull", "exp_complete", "expcomplete",
-        "experience_complete", "experiencecomplete", "xp_received", "xpreceived"
-    )
-
-    private val adFreeRewardVendorTokens = listOf(
-        "pangolin", "pangle", "snssdk", "bytedance", "bytecdn", "byteimg",
-        "gdt", "guangdiantong", "tencentad", "qqad", "wechatad",
-        "tanx", "alimama", "alibaba", "taobao", "tmall",
-        "kuaishou", "kwai", "nebula",
-        "sigmob", "mintegral", "vungle", "unity3d", "unity-ads",
-        "ironsrc", "applovin", "chartboost", "inmobi",
-        "admob", "doubleclick", "googleadservices", "googleadmob",
-        "topon", "tradplus", "adscope", "beizi",
-        "youmi", "adcolony", "ogury", "smaato", "tapjoy",
-        "mopub", "fyber", "inneractive", "moloco", "bidmachine",
-        "startapp", "pubnative", "rayjump", "appsflyer", "adjust", "singular",
-        "kochava", "branch", "tenjin", "skadnetwork",
-        "facebook", "audience_network", "meta", "fbad",
-        "baidu", "baidumob", "baidumobads", "bdmob",
-        "huawei", "huaweiads", "hms", "hicloud",
-        "xiaomi", "xiaomiad", "miuiad", "mimob",
-        "oppo", "oppoads", "heytap", "nearme",
-        "vivo", "vivo_ad", "vivoad", "jovi",
-        "samsung", "samsungads", "galaxy",
-        "lg", "lgad", "sony", "sonyad",
-        "motorola", "nokia", "oneplus", "realme", "oppo",
-        "admob", "firebase", "crashlytics", "analytics",
-        "amplitude", "mixpanel", "flurry", "bugsnay", "newrelic",
-        "braze", "clevertap", "moengage", "leanplum",
-        "onesignal", "airship", "urban", "pushwoosh",
-        "countly", "localytics", "apsalar", "taplytics",
-        "beead", "bee-ad", "yousu", "yousuad",
-        "adview", "adviewcn", "domob", "domobcn",
-        "guozhen", "guozhenad", "airpus", "airpusad",
-        "jiatuan", "jiatuanad", "wubi", "wubiad",
-        "chuangyi", "chuangyiad", "feiyu", "feiyuad",
-        "yixuan", "yixuanad", "youmeng", "ymob",
-        "dianru", "drmob", "guoan", "gaad",
-        "admaster", "mdotm", "wqmobile", "wqmob",
-        "mads", "madhouse", "miit", "miitbeian",
-        "cnzz", "cnad", "allyes", "alimama",
-        "tanx", "tanx.com", "csbew", "csbew.com",
-        "jmads", "jpush", "jiguang", "aurora",
-        "getui", "igexin", "gepush", "unipush",
-        "umeng", "umengad", "umengads",
-        "友盟", "友盟广告", "友盟+",
-        "穿山甲", "优量汇", "百青藤",
-        "快手广告", "磁力引擎", "磁力万象",
-        "华为广告", "小米广告", "OPPO广告", "vivo广告",
-        "三星广告", "魅族广告", "一加广告", "realme广告"
-    )
-
-    private fun looksLikeAdFreeRewardDomain(domain: String): Boolean {
-        val lower = domain.trim().lowercase()
-        if (lower.isBlank()) return false
-        // 明确的奖励回调单关键词即可命中（reward_/reward- 前缀或 .reward. 片段），放宽双词门槛
-        if (lower.contains("reward") || lower.contains("incentiv")) {
-            return true
-        }
-        if (adFreeRewardDomainTokens.any { lower.contains(it) }) return true
-        if (!adFreeRewardVendorTokens.any { lower.contains(it) }) return false
-        // early-exit 取代 count() >= 2，避免遍历完整个表
-        var hits = 0
-        for (kw in AD_FREE_REWARD_KEYWORDS) {
-            if (lower.contains(kw)) {
-                if (++hits >= 2) return true
-            }
-        }
-        return false
-    }
-
-    private fun resolveAdFreeRewardProtection(
-        domain: String,
-        vendor: String,
-        appName: String,
-        protectedQuestion: Boolean
-    ): Boolean {
-        if (protectedQuestion) return false
-        if (!FeatureSettingsRepository.isAdFreeRewardEnabled(this)) return false
-        if (!looksLikeAdFreeRewardDomain(domain)) {
-            val effectiveVendor = vendor.ifBlank {
-                RuleRepository.classifyVendorFromHints(this, domain, appName)
-            }
-            if (!RuleRepository.looksLikeAdSdkInfraDomain(domain, effectiveVendor) &&
-                !RuleRepository.looksLikeAdDomain(domain) &&
-                !RuleRepository.shouldTreatAsGeneralAdTraffic(domain, effectiveVendor, appName)
-            ) return false
-        }
-        StatsRepository.recordRequest(this, vendor, appName)
-        logDecisionOnce(
-            key = "dns-adfree-pass:${domain}:${appName}",
-            message = "Ad-free reward DNS pass domain=$domain app=$appName vendor=$vendor",
-            minIntervalMillis = 5_000L
-        )
-        return true
-    }
-
     private fun resolveUpstreamIp(domain: String): String? {
         val addresses = runCatching { java.net.InetAddress.getAllByName(domain) }.getOrNull()
         return addresses?.firstOrNull()?.hostAddress
@@ -2063,17 +1990,7 @@ class AdBlockVpnService : VpnService() {
                 RuleRepository.isSensitiveAuthDomain(question.domain)
         }
 
-        val adFreeRewardProtection = if (FeatureSettingsRepository.isAdFreeRewardEnabled(this)) {
-            // 奖励放行必须先于规则命中判定：激励视频 SDK 域名普遍在规则库中，
-            // 若让 sinkhole/SNI 规则命中先生效，开关打开也照拦，功能形同虚设。
-            // 白名单/鉴权域名例外：绝不因奖励模式放行登录支付链路
-            looksLikeAdFreeRewardDomain(question.domain) &&
-                !RuleRepository.isWhitelistedDomain(question.domain) &&
-                !RuleRepository.isSensitiveAuthDomain(question.domain)
-        } else {
-            resolveAdFreeRewardProtection(question.domain, vendor, appName, protectedQuestion)
-        }
-        if (domainContext.matchedRule != null && !protectedQuestion && !adFreeRewardProtection) {
+        if (domainContext.matchedRule != null && !protectedQuestion) {
             val rewriteTarget = domainContext.matchedRule.dnsrewrite
             if (!rewriteTarget.isNullOrBlank()) {
                 handleDnsRewriteResponse(info, question, rewriteTarget, output, vendor, appName)
@@ -2089,7 +2006,7 @@ class AdBlockVpnService : VpnService() {
             return
         }
 
-        if (!protectedQuestion && !adFreeRewardProtection && shouldTreatAsGeneralAdTraffic(question.domain, vendor, appName)) {
+        if (!protectedQuestion && shouldTreatAsGeneralAdTraffic(question.domain, vendor, appName)) {
             output.write(PacketCodec.buildUdpResponse(info, DnsMessageParser.buildSinkholeResponse(info.payload, question) ?: return))
             StatsRepository.recordBlockedAuto(this, vendor, appName, question.domain, 512, StatsRepository.BlockSource.URL_HEURISTIC, StatsRepository.ProtocolHint.DNS)
             logDecisionOnce(
@@ -2160,18 +2077,6 @@ class AdBlockVpnService : VpnService() {
             rememberAdIpTargetsForAliases(question, aliasTargets, upstreamResponse, appName)
         }
 
-        if (FeatureSettingsRepository.isAdFreeRewardEnabled(this) && addresses.isNotEmpty() && !protectedQuestion) {
-            val effectiveVendor = vendor.ifBlank {
-                RuleRepository.classifyVendorFromHints(this, question.domain, appName)
-            }
-            if (RuleRepository.looksLikeAdSdkInfraDomain(question.domain, effectiveVendor) ||
-                RuleRepository.looksLikeAdDomain(question.domain) ||
-                RuleRepository.shouldTreatAsGeneralAdTraffic(question.domain, effectiveVendor, appName) ||
-                looksLikeAdFreeRewardDomain(question.domain)) {
-                rememberHttpsDecryptTargets(question, upstreamResponse, appName, effectiveVendor)
-            }
-        }
-
         // 放行：记录统计和日志
         StatsRepository.recordRequest(this, vendor, appName)
         logDecisionOnce(
@@ -2182,7 +2087,24 @@ class AdBlockVpnService : VpnService() {
 
         // 检查别名目标是否需要拦截
         if (handleBlockedDnsAliasTargets(info, question, appName, vendor, aliasTargets, output)) return
-        
+
+        // IPv6 绕过抑制：未拦下的广告/可疑域名把应答中的 AAAA 记录清零，
+        // 阻断 v6 直连绕过 SNI/IP 黑名单（客户端自动回退 IPv4，仍走 DNS 级拦截）
+        val aaaaTargets = linkedSetOf(question.domain.lowercase())
+        aliasTargets.forEach { aaaaTargets.add(it.lowercase()) }
+        val suspiciousForV6 = domainContext.matchedRule == null && (
+            RuleRepository.looksLikeAdSdkInfraDomain(question.domain, vendor) ||
+                RuleRepository.looksLikeAdDomain(question.domain) ||
+                RuleRepository.shouldTreatAsGeneralAdTraffic(question.domain, vendor, appName)
+            )
+        if (suspiciousForV6 && DnsMessageParser.suppressAAAARecords(upstreamResponse, aaaaTargets)) {
+            logDecisionOnce(
+                key = "dns-aaaa-suppress:${question.domain}",
+                message = "Suppressed AAAA records for ad domain=${question.domain} app=$appName vendor=$vendor",
+                minIntervalMillis = 30_000L
+            )
+        }
+
         // 写入 DNS 缓存并放行
         cacheDnsResponse(question, upstreamResponse)
         output.write(PacketCodec.buildUdpResponse(info, upstreamResponse))
@@ -2209,17 +2131,7 @@ class AdBlockVpnService : VpnService() {
                 RuleRepository.isSensitiveAuthDomain(question.domain)
         }
 
-        val adFreeRewardProtection = if (FeatureSettingsRepository.isAdFreeRewardEnabled(this)) {
-            // 奖励放行必须先于规则命中判定：激励视频 SDK 域名普遍在规则库中，
-            // 若让 sinkhole/SNI 规则命中先生效，开关打开也照拦，功能形同虚设。
-            // 白名单/鉴权域名例外：绝不因奖励模式放行登录支付链路
-            looksLikeAdFreeRewardDomain(question.domain) &&
-                !RuleRepository.isWhitelistedDomain(question.domain) &&
-                !RuleRepository.isSensitiveAuthDomain(question.domain)
-        } else {
-            resolveAdFreeRewardProtection(question.domain, vendor, appName, protectedQuestion)
-        }
-        if (domainContext.matchedRule != null && !protectedQuestion && !adFreeRewardProtection) {
+        if (domainContext.matchedRule != null && !protectedQuestion) {
             val rewriteTarget = domainContext.matchedRule.dnsrewrite
             val rewrittenResponse = if (!rewriteTarget.isNullOrBlank()) {
                 val rewriteIp = if (looksLikeIpAddress(rewriteTarget)) {
@@ -2249,7 +2161,7 @@ class AdBlockVpnService : VpnService() {
             return null
         }
 
-        if (!protectedQuestion && !adFreeRewardProtection && shouldTreatAsGeneralAdTraffic(question.domain, vendor, appName)) {
+        if (!protectedQuestion && shouldTreatAsGeneralAdTraffic(question.domain, vendor, appName)) {
             val sinkhole = DnsMessageParser.buildSinkholeResponse(task.payload, question)
             if (sinkhole != null) {
                 dnsResultOut.offer(DnsAsyncResult(
@@ -2374,18 +2286,6 @@ class AdBlockVpnService : VpnService() {
             rememberAdIpTargets(question, upstreamResponse, appName, vendor)
         } else if (aliasTargets.isNotEmpty() && !protectedQuestion) {
             rememberAdIpTargetsForAliases(question, aliasTargets, upstreamResponse, appName)
-        }
-
-        if (FeatureSettingsRepository.isAdFreeRewardEnabled(this) && addresses.isNotEmpty() && !protectedQuestion) {
-            val effectiveVendor = vendor.ifBlank {
-                RuleRepository.classifyVendorFromHints(this, question.domain, appName)
-            }
-            if (RuleRepository.looksLikeAdSdkInfraDomain(question.domain, effectiveVendor) ||
-                RuleRepository.looksLikeAdDomain(question.domain) ||
-                RuleRepository.shouldTreatAsGeneralAdTraffic(question.domain, effectiveVendor, appName) ||
-                looksLikeAdFreeRewardDomain(question.domain)) {
-                rememberHttpsDecryptTargets(question, upstreamResponse, appName, effectiveVendor)
-            }
         }
 
         StatsRepository.recordRequest(this, vendor, appName)
@@ -2659,7 +2559,6 @@ class AdBlockVpnService : VpnService() {
         if (host.isBlank() || host == "localhost" || host.endsWith(".local")) return false
         if (isProtectedTrafficDomain(host)) return false
         if (RuleRepository.isWhitelistedDomain(host) || RuleRepository.isSensitiveAuthDomain(host)) return false
-        if (FeatureSettingsRepository.isAdFreeRewardEnabled(this) && looksLikeAdFreeRewardDomain(host)) return false
         val appName = resolveAppName(host, info)
         val vendor = classifyVendorCached(host, appName)
         val decisionContext = resolveDomainDecisionContext(
@@ -2716,6 +2615,10 @@ class AdBlockVpnService : VpnService() {
         return payload.isNotEmpty() && payload[0] == 0x16.toByte()
     }
 
+    // SNI 分段重组缓冲：ClientHello 常被 TCP 分段（约 5-8% 连接），单包解析失败会永久漏检。
+    // 按 flowKey 缓冲最多 8KB，凑齐后一次解析；会话结束/超限清理
+    private val sniReassemblyBuffers = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+
     private fun shouldBlockBySni(
         info: com.HanFeng.model.PacketInfo,
         output: FileOutputStream
@@ -2727,8 +2630,40 @@ class AdBlockVpnService : VpnService() {
         val isSyn = info.tcpFlags.hasTcpFlag(TCP_FLAG_SYN) && !info.tcpFlags.hasTcpFlag(TCP_FLAG_ACK)
         if (!isSyn && payload.size < 5) return false
 
-        val clientHelloInfo = TlsClientHelloParser.extractClientHelloInfo(payload) ?: return false
-        val sniHost = clientHelloInfo.sniHost ?: return false
+        val flowKey = buildCacheKeys(info).flowKey
+        // 单包直接解析；失败后启用流缓冲累积后续分段再试
+        var parsePayload: ByteArray = payload
+        var clientHelloInfo = TlsClientHelloParser.extractClientHelloInfo(payload)
+        if (clientHelloInfo == null) {
+            val buffered = synchronized(sniReassemblyBuffers) {
+                val existing = sniReassemblyBuffers[flowKey]
+                if (existing == null) {
+                    if (payload.size >= 16384) return false
+                    sniReassemblyBuffers[flowKey] = payload.copyOf()
+                    null
+                } else {
+                    val merged = existing + payload
+                    if (merged.size > 16384) {
+                        sniReassemblyBuffers.remove(flowKey)
+                        return false
+                    }
+                    sniReassemblyBuffers[flowKey] = merged
+                    merged
+                }
+            } ?: return false
+            parsePayload = buffered
+            clientHelloInfo = TlsClientHelloParser.extractClientHelloInfo(buffered)
+        } else {
+            // 解析成功，清理该流残留缓冲
+            if (sniReassemblyBuffers.isNotEmpty()) sniReassemblyBuffers.remove(flowKey)
+        }
+        val sniHost = clientHelloInfo?.sniHost
+        if (sniHost == null) {
+            // 缓冲已满仍解析不出（可能非 TLS 流）——放弃并清缓冲，避免普通流占内存
+            val bufferedSize = parsePayload.size
+            if (bufferedSize >= 16384) sniReassemblyBuffers.remove(flowKey)
+            return false
+        }
         val appName = resolveAppName(sniHost, info)
         val destinationIp = formatAddress(info.destinationAddress)
 
@@ -8247,6 +8182,8 @@ class AdBlockVpnService : VpnService() {
         if (!RouteCacheMaintenanceSupport.shouldRunCheck(now, lastRouteCachePruneCheckAt)) return
         lastRouteCachePruneCheckAt = now
         prunePlainHttpFlowsIfNeeded()
+        maybePruneTcpDnsFlows()
+        pruneSniReassemblyBuffers()
         synchronized(adIpTargetCache) {
             pruneAdIpTargetsLocked()
         }
@@ -8759,23 +8696,6 @@ class AdBlockVpnService : VpnService() {
         appName: String,
         qType: Int? = null
     ): DomainDecisionContext {
-        // 免广告领奖励模式：激励视频 SDK 域名普遍在规则库中，规则命中若先生效，
-        // QUIC/MITM 层会继续把奖励流量当广告强制降级/断流，开关形同虚设。
-        // 仅放行明确奖励语义域名，白名单/鉴权域名不受影响
-        if (FeatureSettingsRepository.isAdFreeRewardEnabled(this)) {
-            val lowerDomain = domain.trim().lowercase()
-            if ((lowerDomain.contains("reward") || lowerDomain.contains("incentiv")) &&
-                !RuleRepository.isWhitelistedDomain(domain) &&
-                !RuleRepository.isSensitiveAuthDomain(domain)
-            ) {
-                return DomainDecisionContext(
-                    appName = appName,
-                    matchedRule = null,
-                    vendor = classifyVendorCached(domain, appName),
-                    reason = "adfree-reward-pass"
-                )
-            }
-        }
         val matchedRule = RuleRepository.findMatchingRule(
             context = this,
             domain = domain,
@@ -9998,10 +9918,6 @@ class AdBlockVpnService : VpnService() {
 
     private fun shouldTreatAsGeneralAdTraffic(domain: String, vendor: String, appName: String?): Boolean {
         if (RuleRepository.isDomainExcepted(this, domain)) return false
-        if (FeatureSettingsRepository.isAdFreeRewardEnabled(this) && (looksLikeAdFreeRewardDomain(domain) ||
-            RuleRepository.looksLikeAdSdkInfraDomain(domain, vendor) ||
-            RuleRepository.looksLikeAdDomain(domain) ||
-            RuleRepository.shouldTreatAsGeneralAdTraffic(domain, vendor, appName))) return false
         if (RuleRepository.shouldTreatAsGeneralAdTraffic(domain, vendor, appName)) return true
         if (!isGovernedPromoApp(appName)) return false
         val normalizedDomain = domain.trim().lowercase()
@@ -10703,28 +10619,6 @@ class AdBlockVpnService : VpnService() {
         private val OBFUS_DIGIT_PATTERN = Regex("[0-9]{5,}")
         private val OBFUS_ALTERNATING_PATTERN = Regex("([a-z][0-9]){4,}")
         // 免广告奖励域名关键词条目（_once_ allocate 而非每次调 listOf）
-        private val AD_FREE_REWARD_KEYWORDS = arrayOf(
-            "reward", "verify", "callback", "unlock", "confirm",
-            "complete", "completed", "finish", "finished", "grant", "claim",
-            "incentive", "inspire", "earned", "bonus",
-            "coin", "cash", "point", "score", "diamond", "gold",
-            "gift", "prize", "lottery", "spin", "wheel",
-            "daily", "checkin", "login", "share", "invite",
-            "referral", "level", "achievement", "milestone", "combo",
-            "s2s", "postback", "server_to_server", "verified",
-            "task", "survey", "offer", "install", "click",
-            "conversion", "attribution",
-            "chest", "box", "pack", "loot", "card",
-            "ticket", "key", "token", "badge",
-            "energy", "stamina", "lives", "hearts", "hp",
-            "exp", "experience", "xp",
-            "redpacket", "hongbao", "angpao", "lucky",
-            "draw", "scratch", "raffle",
-            "sign", "mission", "quest", "challenge", "event",
-            // 奖励视频素材/播放链路：激励视频加载不出来通常卡在素材域名被拦
-            "rewardvideo", "incentivevideo", "playable", "endcard",
-            "material", "creative", "videocdn", "rewardcdn"
-        )
         private const val TCP_FLAG_FIN = 0x01
         private const val TCP_FLAG_SYN = 0x02
         private const val TCP_FLAG_RST = 0x04

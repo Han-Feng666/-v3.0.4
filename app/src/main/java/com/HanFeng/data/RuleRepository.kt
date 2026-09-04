@@ -2583,6 +2583,37 @@ object RuleRepository {
         sourcePort: Int? = null
     ): Boolean {
         val normalized = sanitizeDomain(domain) ?: return false
+        // DNS 决策缓存：同一 (domain|qType|app|port) 10 秒内直接复用结果，
+        // 高频重复查询（页面加载并发请求同一域名）跳过全链路索引扫描
+        val decisionKey = buildString(normalized.length + (appName?.length ?: 0) + 16) {
+            append(normalized).append('|').append(qType ?: 0).append('|')
+            append(appName ?: "").append('|').append(destinationPort ?: 0)
+        }
+        if (qType == null) {
+            // 非 DNS 语义调用（URL/HTTP 层）带上下文多，缓存键不完整时不缓存，保持精确
+            return computeIsBlocked(context, normalized, qType, appName, destinationPort, sourcePort)
+        }
+        synchronized(dnsBlockDecisionLock) {
+            dnsBlockDecisionCache[decisionKey]?.let { (blocked, at) ->
+                if (System.currentTimeMillis() - at < DECISION_TTL_MS) return blocked
+                dnsBlockDecisionCache.remove(decisionKey)
+            }
+        }
+        val result = computeIsBlocked(context, normalized, qType, appName, destinationPort, sourcePort)
+        synchronized(dnsBlockDecisionLock) {
+            dnsBlockDecisionCache[decisionKey] = result to System.currentTimeMillis()
+        }
+        return result
+    }
+
+    private fun computeIsBlocked(
+        context: Context,
+        normalized: String,
+        qType: Int?,
+        appName: String?,
+        destinationPort: Int?,
+        sourcePort: Int?
+    ): Boolean {
         val simpleIndex = getSimpleDomainIndex(context)
         val trie = getTrieIndex(context)
         val simpleImportantBlock = trie.hasImportantBlock(normalized)

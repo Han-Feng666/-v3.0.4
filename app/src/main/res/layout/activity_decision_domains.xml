@@ -119,6 +119,18 @@
             android:textColor="@color/hf_text_primary" />
     </LinearLayout>
 
+    <Button
+        android:id="@+id/btnPersistLearned"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/bg_button"
+        android:backgroundTint="@null"
+        android:text="学习域名一键入库为拦截规则"
+        android:textAllCaps="false"
+        android:textColor="@color/hf_text_primary"
+        android:visibility="gone" />
+
     <TextView
         android:id="@+id/emptyText"
         android:layout_width="match_parent"

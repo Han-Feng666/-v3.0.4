@@ -549,10 +549,6 @@ class MainActivity : BaseActivity() {
         }
     }
 
-    fun openTrafficCardPage() {
-        openExternalUrl("https://h5.lot-ml.com/ProductEn/Index/120d6424545c4be5")
-    }
-
     fun joinQqGroup() {
         openExternalUrl("mqqapi://card/show_pslcard?src_type=internal&version=1&uin=573309536&card_type=group&source=qrcode")
     }
