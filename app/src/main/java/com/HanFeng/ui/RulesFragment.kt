@@ -1174,6 +1174,20 @@ class RulesFragment : Fragment(R.layout.fragment_rules) {
                 if (selectedIds.isEmpty()) "删除所选" else "删除所选（${selectedIds.size}）"
             }
             adapter.submit(state.items)
+            maybeTriggerVendorReclassify(appContext)
+        }
+    }
+
+    // 后台厂商重算：仅触发一次，完成后静默刷新列表反映新分组
+    private var vendorReclassifyTriggered = false
+    private fun maybeTriggerVendorReclassify(appContext: android.content.Context) {
+        if (vendorReclassifyTriggered) return
+        vendorReclassifyTriggered = true
+        RuleRepository.reclassifyDefaultVendorsInBackground(appContext) {
+            if (_binding != null && isAdded) {
+                invalidateRuleListCache()
+                refreshListSoon(300L)
+            }
         }
     }
 
@@ -2268,10 +2282,10 @@ class RulesFragment : Fragment(R.layout.fragment_rules) {
         val ctx = imageView.context.applicationContext
         val customPath = FeatureSettingsRepository.getCustomBackgroundPath(ctx)
         if (!customPath.isNullOrEmpty()) {
-            imageView.applyCustomFileBackground(customPath)
+            CustomVisualsApi.applyFileBackground(imageView, customPath)
         } else {
             // 与首页/统计页一致走共享背景图；命中 CustomVisuals 缓存为同步操作，无闪烁
-            imageView.applyCustomAssetBackground("custom/background")
+            CustomVisualsApi.applyAssetBackground(imageView, "custom/background")
         }
     }
 }

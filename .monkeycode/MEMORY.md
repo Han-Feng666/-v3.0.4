@@ -1101,3 +1101,16 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
   - 导出后必须复扫 monkeycode/chaitin/claude/opencode 等关键词（注意 grep 退出码判断，勿用短路误判）。
   - 开源仓库需配 README.md（功能/构建/架构）与 LICENSE（MIT + shizuku-fork Apache 2.0 第三方声明）。
   - 首个导出包：/workspace/hanfeng-opensource-v3.1.1.tar.gz（含全新 git 历史，21M 源码 / 4.4M tar）。
+
+[磁贴与冻结列表修复记录]
+- Date: 2026-09-04
+- Context: 用户反馈磁贴移入通知栏即闪退、冻结列表显示 0 个
+- Category: 排错调试
+- Instructions:
+  - TileService/Activity 注册自定义 action 广播必须带 RECEIVER_NOT_EXPORTED/EXPORTED（Android 13+），
+    否则 SecurityException；TileService 崩溃表现为"移入通知栏后 APP 打不开"。
+  - 包启用状态（enabledState/suspended）读取一律以本地 PackageManager 为权威，
+    Shizuku UserService 的 serviceContext 未就绪时返回 DEFAULT 会覆盖真实状态。
+  - 冻结语义 = disabled 或 suspended；解冻需同时 enable + unsuspend。
+  - 沙盒 gradle 增量编译与 Android Studio 结果可能不一致（扩展符号解析差异），
+    用户本地构建成功即以用户为准，勿反复重试沙盒编译。

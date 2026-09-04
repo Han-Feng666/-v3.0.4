@@ -254,3 +254,17 @@ fun clearCustomFileBackgroundCache(path: String?) {
         .filter { it.startsWith(prefix) }
         .forEach { customBackgroundDrawableCache.remove(it) }
 }
+
+/**
+ * 显式命名空间入口：部分编译环境下顶层扩展函数的跨文件解析不稳定，
+ * 通过 object 成员函数引用可保证符号可见（同 RuleListFormat 的 object 模式）
+ */
+object CustomVisualsApi {
+    fun applyAssetBackground(imageView: ImageView, assetBaseName: String) {
+        imageView.applyCustomAssetBackground(assetBaseName)
+    }
+
+    fun applyFileBackground(imageView: ImageView, filePath: String?) {
+        imageView.applyCustomFileBackground(filePath)
+    }
+}

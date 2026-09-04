@@ -18,8 +18,6 @@ import com.HanFeng.data.AppFreezeManager.FreezeEntry
 import com.HanFeng.data.LogRepository
 import com.HanFeng.data.ShizukuAdControlRepository
 import com.HanFeng.databinding.ActivityAppFreezeBinding
-import com.HanFeng.ui.applyCustomAssetBackground
-import com.HanFeng.ui.applyCustomFileBackground
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay

@@ -60,6 +60,20 @@ class HanFengApp : Application() {
         writeStartupLog("IdleShutdownController installed")
         initializeBuiltInShizuku()
         writeStartupLog("BuiltInShizuku initialized")
+        // 规则库后台预热：与首帧渲染并行解析规则文件并构建索引，
+        // 用户进入规则页/开启拦截时数据已就绪，消除"每次打开 APP 都重新加载"的等待
+        Thread({
+            runCatching {
+                val start = System.currentTimeMillis()
+                com.HanFeng.data.RuleRepository.prewarmCaches(this)
+                // 顺带预热规则列表数据（getRules 与索引共享解析结果缓存）
+                com.HanFeng.data.RuleRepository.getRules(this)
+                android.util.Log.i("HanFengApp", "rule prewarm done in ${System.currentTimeMillis() - start}ms")
+            }
+        }, "hf-rule-prewarm").apply {
+            isDaemon = true
+            priority = Thread.MIN_PRIORITY + 1
+        }.start()
     }
 
     /**
