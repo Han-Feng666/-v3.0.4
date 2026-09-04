@@ -40,10 +40,24 @@ class AdBlockTileService : TileService() {
 
     override fun onCreate() {
         super.onCreate()
-        registerReceiver(
-            statusReceiver,
-            IntentFilter(NetworkKernel.statusChangedAction)
-        )
+        runCatching {
+            // Android 14+ 注册非系统广播必须显式声明导出性，否则抛 SecurityException
+            // 导致 TileService 绑定失败，SystemUI 拉起服务时连带闪退
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(
+                    statusReceiver,
+                    IntentFilter(NetworkKernel.statusChangedAction),
+                    Context.RECEIVER_NOT_EXPORTED
+                )
+            } else {
+                registerReceiver(
+                    statusReceiver,
+                    IntentFilter(NetworkKernel.statusChangedAction)
+                )
+            }
+        }.onFailure {
+            android.util.Log.w("AdBlockTileService", "registerReceiver failed: ${it.message}")
+        }
     }
 
     override fun onDestroy() {

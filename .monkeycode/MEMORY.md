@@ -1055,3 +1055,49 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
     （resolveDomainDecisionContextForApp 返回非拦截上下文）、MITM 内容层（既有 isAdFreeRewardEnabled 分支）。
   - 放行判定：reward/incentiv 语义域名；白名单与登录鉴权域名（isWhitelistedDomain/isSensitiveAuthDomain）绝不放行。
   - 新增任何拦截层（如未来 TCP 53 DNS、QUIC 新分支）时必须同步接入奖励豁免，否则开关又会形同虚设。
+
+[弹窗毛玻璃统一约定]
+- Date: 2026-09-04
+- Context: 用户反馈透明弹窗与界面文字重叠，要求全部弹窗按钮加高斯模糊
+- Category: 代码模式
+- Instructions:
+  - 新弹窗一律经 StableDialog.builder/materialBuilder 创建，show 用 showSafely/showMaterialSafely
+    扩展（内含 FLAG_BLUR_BEHIND + dim 兜底 + 入场动画）；create() 后手动 show 的必须补
+    StableDialog.applyLiquidGlassWindow(dialog)。禁止直接 new AlertDialog.Builder / MaterialAlertDialogBuilder。
+  - 液态玻璃可读性双保险：窗口级真实模糊（Android 12+）+ drawable 高不透明度底色兜底
+    （bg_panel 82-90% 白、bg_button 系列同步）；省电模式系统会拒绝模糊渲染。
+  - 批量正则替换 .show() 时严防误伤 Toast.makeText(...).show()（本轮已踩坑并修复）。
+
+[免广告领奖励与流量卡已删除]
+- Date: 2026-09-04
+- Context: 用户要求删除免广告领奖励和免费领流量卡功能
+- Category: 代码结构
+- Instructions:
+  - 两功能已全量移除（设置开关/四层放行/AdRewardInterceptor 伪造回调/统计/布局按钮/外链），
+    后续增强不要再引用 AdFreeReward/AdReward/TrafficCard/lot-ml 相关符号。
+  - 广告拦截当前为无例外全拦语义，新增拦截层无需再考虑奖励放行分支。
+  - TCP DNS（53/TCP）拦截走 handleTcpDnsPacket：首包 2 字节长度前缀校验 + 命中 RST，
+    与 SNI 拦截同模式，无流重组。
+  - AAAA 抑制用 DnsMessageParser.suppressAAAARecords（RDATA 清零，不物理删除避免压缩指针失效）。
+
+[规则库决策缓存约定]
+- Date: 2026-09-04
+- Context: Agent 做"热路径基准与针对性优化"时发现 dnsBlockDecisionCache 是死代码
+- Category: 性能优化
+- Instructions:
+  - isBlocked 已接入 10 秒 TTL 决策缓存（仅 qType != null 的 DNS 语义调用缓存），
+    缓存键含 domain|qType|app|dPort；规则增删改路径必须继续 clear 该缓存（现有 append/save 链路已覆盖）。
+  - 修改域名判定语义（isBlocked/computeIsBlocked 内部逻辑）时评估是否需要提前失效缓存。
+
+[开源导出规范]
+- Date: 2026-09-04
+- Context: 用户要求整理去除 AI 痕迹的开源源码
+- Category: 工作流协作
+- Instructions:
+  - 开源导出排除项：.git（重建新历史，作者用 Han-Feng666@users.noreply.github.com）、.monkeycode/、
+    .ai-ready/、根目录开发过程 *.md、adb_logcat_full_dir、ProxyPinCA_extracted、*.patch、
+    local.properties、build 产物、CHANGE_TRIGGER.txt。
+  - .gitignore 里的 "# AI Tools" 段与 Node/Python/Flutter 等无关段需替换为 Android 标准模板。
+  - 导出后必须复扫 monkeycode/chaitin/claude/opencode 等关键词（注意 grep 退出码判断，勿用短路误判）。
+  - 开源仓库需配 README.md（功能/构建/架构）与 LICENSE（MIT + shizuku-fork Apache 2.0 第三方声明）。
+  - 首个导出包：/workspace/hanfeng-opensource-v3.1.1.tar.gz（含全新 git 历史，21M 源码 / 4.4M tar）。

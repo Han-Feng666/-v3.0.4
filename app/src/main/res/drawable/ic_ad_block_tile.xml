@@ -1,21 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    广告拦截磁贴图标: 告示牌 + 禁止斜杠
-    - 告示牌(圆角矩形 + 立柱)代表广告
-    - 右上到左下贯穿的斜杠代表拦截/禁止
-    SystemUI 在磁贴里会以单色 tint 渲染,fillColor 用纯白即可
+    广告拦截磁贴图标: 手机 + 内嵌盾牌
+    - 外层圆角矩形代表手机（顶部听筒缝隙 + 底部无按键）
+    - 居中盾牌代表防护/拦截
+    SystemUI 在磁贴里以单色 tint 渲染，fillColor 用纯白即可
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+
+    <!-- 手机机身：圆角矩形描边（挖空内部，让盾牌区域透出背景） -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M3.5,4.5 h17 a1.5,1.5 0 0 1 1.5,1.5 v9 a1.5,1.5 0 0 1 -1.5,1.5 h-17 a1.5,1.5 0 0 1 -1.5,-1.5 v-9 a1.5,1.5 0 0 1 1.5,-1.5 z M10,16.5 h4 v3 a1,1 0 0 1 -1,1 h-2 a1,1 0 0 1 -1,-1 z" />
+        android:pathData="M7,1.5 L17,1.5 A1.8,1.8 0 0 1 18.8,3.3 L18.8,20.7 A1.8,1.8 0 0 1 17,22.5 L7,22.5 A1.8,1.8 0 0 1 5.2,20.7 L5.2,3.3 A1.8,1.8 0 0 1 7,1.5 Z M7.2,3.3 A0.4,0.4 0 0 0 6.8,3.7 L6.8,20.3 A0.4,0.4 0 0 0 7.2,20.7 L16.8,20.7 A0.4,0.4 0 0 0 17.2,20.3 L17.2,3.7 A0.4,0.4 0 0 0 16.8,3.3 Z" />
+
+    <!-- 顶部听筒缝 -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M20.5,3.5 L3.5,20.5 A1.2,1.2 0 0 0 5.2,22.3 L22.2,5.3 A1.2,1.2 0 0 0 20.5,3.5 Z"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="0" />
+        android:pathData="M10.4,2.6 L13.6,2.6 A0.45,0.45 0 0 1 13.6,3.5 L10.4,3.5 A0.45,0.45 0 0 1 10.4,2.6 Z" />
+
+    <!-- 盾牌：顶部宽、底部收尖，内部挖空 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,6.2 L16.2,7.8 C16.2,7.8 16.4,13.2 12,16.6 C7.6,13.2 7.8,7.8 7.8,7.8 Z M12,7.9 L9.4,8.9 C9.5,10.6 9.9,13.4 12,15.3 C14.1,13.4 14.5,10.6 14.6,8.9 Z" />
 </vector>

@@ -345,25 +345,32 @@ object ShizukuAdControlRepository {
             .getOrNull()
             ?.let { remoteInstalled -> remoteInstalled || packageManagerInstalled }
             ?: packageManagerInstalled
-        val enabledState = runCatching { remote?.getPackageEnabledState(normalized) }
-            .onFailure {
-                invalidateService()
-                serviceMarkedDead = true
-            }
-            .getOrNull()
-            ?: runCatching {
-                context.packageManager.getApplicationEnabledSetting(normalized)
-            }.getOrDefault(PackageManager.COMPONENT_ENABLED_STATE_DEFAULT)
-        val suspended = runCatching { remote?.isPackageSuspended(normalized) }
-            .onFailure {
-                invalidateService()
-                serviceMarkedDead = true
-            }
-            .getOrNull()
-            ?: runCatching {
-                val info = context.packageManager.getPackageInfo(normalized, packageQueryFlags())
-                (info.applicationInfo?.flags ?: 0 and android.content.pm.ApplicationInfo.FLAG_SUSPENDED) != 0
-            }.getOrDefault(false)
+        // enabledState 以本地 PackageManager 为准：pm disable-user 写的是全局包设置，
+        // 本进程 getApplicationEnabledSetting 读到的就是权威值；remote（UserService 进程）
+        // 在 serviceContext 未就绪时会返回 DEFAULT 覆盖真实状态，导致已冻结列表显示 0 个
+        val enabledState = runCatching {
+            context.packageManager.getApplicationEnabledSetting(normalized)
+        }.getOrElse {
+            runCatching { remote?.getPackageEnabledState(normalized) }
+                .onFailure {
+                    invalidateService()
+                    serviceMarkedDead = true
+                }
+                .getOrNull()
+                ?: PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+        }
+        // suspended 同样以本地读取为准；注意 elvis 与 and 的优先级，必须显式括号
+        val suspended = runCatching {
+            val info = context.packageManager.getPackageInfo(normalized, packageQueryFlags())
+            ((info.applicationInfo?.flags ?: 0) and android.content.pm.ApplicationInfo.FLAG_SUSPENDED) != 0
+        }.getOrElse {
+            runCatching { remote?.isPackageSuspended(normalized) }
+                .onFailure {
+                    invalidateService()
+                    serviceMarkedDead = true
+                }
+                .getOrNull() == true
+        }
         return PackageControlStatus(
             installed = installed,
             enabledState = enabledState,

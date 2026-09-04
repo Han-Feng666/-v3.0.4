@@ -2267,17 +2267,11 @@ class RulesFragment : Fragment(R.layout.fragment_rules) {
     private fun applyBackgroundImage(imageView: ImageView) {
         val ctx = imageView.context.applicationContext
         val customPath = FeatureSettingsRepository.getCustomBackgroundPath(ctx)
-        // 记录已应用的背景源，切页 onResume 重复调用时跳过重解码/重复 IO，消除视觉闪变
-        if (customPath == lastAppliedBackgroundSource && imageView.drawable != null) {
-            return
-        }
-        lastAppliedBackgroundSource = customPath
         if (!customPath.isNullOrEmpty()) {
             imageView.applyCustomFileBackground(customPath)
         } else {
+            // 与首页/统计页一致走共享背景图；命中 CustomVisuals 缓存为同步操作，无闪烁
             imageView.applyCustomAssetBackground("custom/background")
         }
     }
-
-    private var lastAppliedBackgroundSource: String? = null
 }

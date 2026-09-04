@@ -71,7 +71,10 @@ object AppFreezeManager {
         val status = ShizukuAdControlRepository.queryPackageStatus(context, packageName)
         if (!status.installed) return null
         val systemApp = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-        val frozen = PromoGovernActionRepository.isDisabledState(status.enabledState)
+        val disabled = PromoGovernActionRepository.isDisabledState(status.enabledState)
+        // 用户经由"智能治理/整包暂停"冻结的应用处于 suspended 状态，
+        // 已冻结列表必须一并计入，否则用户冻结后列表显示 0 个
+        val frozen = disabled || status.suspended
         return FreezeEntry(
             packageName = packageName,
             label = label,
@@ -90,8 +93,12 @@ object AppFreezeManager {
     }
 
     fun unfreeze(context: Context, packageName: String): Boolean {
-        return runCatching { ShizukuAdControlRepository.enablePackage(context, packageName) }
+        // 同时解除 disable 与 suspend 两种冻结形态（智能治理/整包暂停产生的是 suspend）
+        val enabled = runCatching { ShizukuAdControlRepository.enablePackage(context, packageName) }
             .getOrDefault(false)
+        val unsuspended = runCatching { ShizukuAdControlRepository.unsuspendPackage(context, packageName) }
+            .getOrDefault(false)
+        return enabled || unsuspended
     }
 
     fun suspend(context: Context, packageName: String): Boolean {

@@ -46,10 +46,10 @@ object StableDialog {
                 w.attributes = w.attributes.apply { blurBehindRadius = DIALOG_BLUR_RADIUS_PX }
                 // dim 与模糊叠加：即使系统拒绝渲染模糊，DIM 也能压暗背后文字保证可读
                 w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-                w.attributes = w.attributes.apply { dimAmount = 0.35f }
+                w.attributes = w.attributes.apply { dimAmount = 0.45f }
             } else {
                 w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-                w.attributes = w.attributes.apply { dimAmount = 0.35f }
+                w.attributes = w.attributes.apply { dimAmount = 0.45f }
             }
         }
         return dialog

@@ -18,6 +18,8 @@ import com.HanFeng.data.AppFreezeManager.FreezeEntry
 import com.HanFeng.data.LogRepository
 import com.HanFeng.data.ShizukuAdControlRepository
 import com.HanFeng.databinding.ActivityAppFreezeBinding
+import com.HanFeng.ui.applyCustomAssetBackground
+import com.HanFeng.ui.applyCustomFileBackground
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -202,7 +204,7 @@ class AppFreezeActivity : BaseActivity() {
                     label = label,
                     icon = runCatching { pm.getApplicationIcon(packageName) }.getOrNull(),
                     systemApp = systemApp,
-                    frozen = com.HanFeng.data.PromoGovernActionRepository.isDisabledState(status.enabledState),
+                    frozen = com.HanFeng.data.PromoGovernActionRepository.isDisabledState(status.enabledState) || status.suspended,
                     suspended = status.suspended,
                     critical = AppFreezeManager.isCritical(packageName)
                 )
