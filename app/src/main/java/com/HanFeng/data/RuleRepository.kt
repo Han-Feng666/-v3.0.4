@@ -18,6 +18,13 @@ import java.io.InputStream
 import java.io.File
 import java.io.FileWriter
 import java.io.BufferedWriter
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.util.concurrent.atomic.AtomicBoolean
 import java.net.InetAddress
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
@@ -46,6 +53,10 @@ object RuleRepository {
     private const val SUSPICIOUS_SAMPLE_DECODE_MAX_LENGTH = 2048
     private const val SUSPICIOUS_SAMPLE_MAX_DECODE_ROUNDS = 2
     private const val RULES_FILE_NAME = "rules.json"
+    private const val SNAPSHOT_FILE_NAME = "rules_snapshot.bin"
+    private const val SNAPSHOT_MAGIC = 0x4846534E // "HFSN"
+    private const val SNAPSHOT_FORMAT_VERSION = 1
+    private const val SNAPSHOT_HEADER_BYTES = 28
     private const val IMPORT_PARSE_BATCH_SIZE = 4_000
     private const val LARGE_RULE_CACHE_THRESHOLD = 20_000
     private const val MAX_STREAM_IMPORT_NEW_RULES = 300_000
@@ -959,7 +970,14 @@ object RuleRepository {
             val file = rulesFile(context)
             val loadedRules = try {
                 if (file.exists()) {
-                    readRulesFile(context, file)
+                    val snapshotRules = loadRulesSnapshotIfValid(context, file)
+                    if (snapshotRules != null) {
+                        snapshotRules
+                    } else {
+                        val parsed = readRulesFile(context, file)
+                        if (parsed.isNotEmpty()) scheduleSnapshotHeal(context)
+                        parsed
+                    }
                 } else {
                     val json = readLegacyRulesJson(context, prefs)
                     val type = object : TypeToken<List<BlockRule>>() {}.type
@@ -1098,6 +1116,9 @@ object RuleRepository {
     private const val DECISION_TTL_MS = 10000L // 10 秒缓存
 
     private val prewarmLock = Any()
+    private val snapshotFileLock = Any()
+    private val snapshotHealRunning = AtomicBoolean(false)
+    private val ruleSourceValues = RuleSource.values()
 
     fun prewarmCaches(context: Context) {
         if (cachedSimpleDomainIndex != null) return
@@ -1143,37 +1164,52 @@ object RuleRepository {
         val portOnlyRules = mutableListOf<BlockRule>()
         val cnameRules = mutableListOf<BlockRule>()
         var ruleCount = 0
-        try {
-            file.bufferedReader(Charsets.UTF_8).use { reader ->
-                JsonReader(reader).use { jsonReader ->
-                    jsonReader.beginArray()
-                    while (jsonReader.hasNext()) {
-                        val rule = gson.fromJson<BlockRule>(jsonReader, BlockRule::class.java)
-                            ?.let(::normalizeRuleFromStorage)
-                            ?: continue
-                        ruleCount++
-                        if (ruleCount > MAX_CACHEABLE_RULES || isImportHeapLow()) continue
-                        allRules += rule
-                        if (isSimpleDomainRule(rule)) {
-                            if (rule.exceptionRule) {
-                                exceptions += rule.domain
-                            } else {
-                                blocked += rule.domain
-                                if (isUserOwnedBlockingRule(rule)) userOwnedBlocked += rule.domain
-                                if (isImportantBlockingRule(rule)) importantBlocked += rule.domain
-                            }
-                        } else {
-                            nonSimpleRules += rule
-                        }
-                        if (rule.regexPattern != null) regexRules += rule
-                        if (rule.keywordPattern != null) keywordRules += rule
-                        if (rule.cosmeticSelector != null) cosmeticRules += rule
-                        if (rule.ipCidr != null) ipCidrRules += rule
-                        if (rule.domain == "*" && rule.ipCidr.isNullOrBlank()) portOnlyRules += rule
-                        if (rule.cname) cnameRules += rule
-                    }
-                    jsonReader.endArray()
+        fun categorize(rule: BlockRule) {
+            if (isSimpleDomainRule(rule)) {
+                if (rule.exceptionRule) {
+                    exceptions += rule.domain
+                } else {
+                    blocked += rule.domain
+                    if (isUserOwnedBlockingRule(rule)) userOwnedBlocked += rule.domain
+                    if (isImportantBlockingRule(rule)) importantBlocked += rule.domain
                 }
+            } else {
+                nonSimpleRules += rule
+            }
+            if (rule.regexPattern != null) regexRules += rule
+            if (rule.keywordPattern != null) keywordRules += rule
+            if (rule.cosmeticSelector != null) cosmeticRules += rule
+            if (rule.ipCidr != null) ipCidrRules += rule
+            if (rule.domain == "*" && rule.ipCidr.isNullOrBlank()) portOnlyRules += rule
+            if (rule.cname) cnameRules += rule
+        }
+        try {
+            val snapshotRules = loadRulesSnapshotIfValid(context, file)
+            if (snapshotRules != null) {
+                snapshotRules.forEach { rule ->
+                    ruleCount++
+                    if (ruleCount <= MAX_CACHEABLE_RULES && !isImportHeapLow()) {
+                        allRules += rule
+                        categorize(rule)
+                    }
+                }
+            } else {
+                file.bufferedReader(Charsets.UTF_8).use { reader ->
+                    JsonReader(reader).use { jsonReader ->
+                        jsonReader.beginArray()
+                        while (jsonReader.hasNext()) {
+                            val rule = gson.fromJson<BlockRule>(jsonReader, BlockRule::class.java)
+                                ?.let(::normalizeRuleFromStorage)
+                                ?: continue
+                            ruleCount++
+                            if (ruleCount > MAX_CACHEABLE_RULES || isImportHeapLow()) continue
+                            allRules += rule
+                            categorize(rule)
+                        }
+                        jsonReader.endArray()
+                    }
+                }
+                if (ruleCount > 0) scheduleSnapshotHeal(context)
             }
         } catch (e: Exception) {
             LogRepository.append(context, "buildAllCachesFromFile failed: ${e.message ?: e.javaClass.simpleName}")
@@ -3701,6 +3737,7 @@ object RuleRepository {
                 cachedWhitelistHits.clear()
                 cachedGeneralAdTrafficHits.clear()
                 cachedRuleMatchHits.clear(); cachedRequestDirectives.clear()
+                scheduleSnapshotHeal(context)
             } else {
                 tempFile.delete()
             }
@@ -7049,6 +7086,8 @@ object RuleRepository {
                 updateRuleCache(normalizedNew)
                 return
             }
+            val preMtime = file.lastModified()
+            val preSize = file.length()
             val raf = java.io.RandomAccessFile(file, "rw")
             try {
                 var bracketPos = file.length() - 1
@@ -7077,6 +7116,7 @@ object RuleRepository {
             } finally {
                 raf.close()
             }
+            appendRulesToSnapshot(context, normalizedNew, preMtime, preSize, file)
         }
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val oldCount = prefs.getInt(KEY_RULE_COUNT, -1)
@@ -7288,6 +7328,371 @@ object RuleRepository {
         }
     }
 
+    // ===== 二进制规则快照（AdGuard 式"导入一次，之后秒加载"）=====
+    // writeRulesFile / appendRulesToFile 时写入或增量追加；冷启动命中则跳过 JSON 反射解析。
+    // 任何失效（magic/版本/stat 不符/解析异常）都安全回退到 JSON 路径并后台自愈重建。
+    private fun snapshotFile(context: Context): File = File(context.filesDir, SNAPSHOT_FILE_NAME)
+
+    private fun writeRulesSnapshot(context: Context, rules: List<BlockRule>, file: File) {
+        val tempFile = File(context.filesDir, "$SNAPSHOT_FILE_NAME.tmp")
+        try {
+            DataOutputStream(BufferedOutputStream(FileOutputStream(tempFile), 1 shl 16)).use { out ->
+                out.writeInt(SNAPSHOT_MAGIC)
+                out.writeInt(SNAPSHOT_FORMAT_VERSION)
+                out.writeLong(file.lastModified())
+                out.writeLong(file.length())
+                out.writeInt(rules.size)
+                rules.forEach { writeRuleSnapshot(out, it) }
+            }
+            synchronized(snapshotFileLock) {
+                if (!tempFile.renameTo(snapshotFile(context))) {
+                    tempFile.copyTo(snapshotFile(context), overwrite = true)
+                    tempFile.delete()
+                }
+            }
+            LogRepository.append(context, "RuleRepository.snapshot written: rules=${rules.size}")
+        } catch (e: Exception) {
+            runCatching { tempFile.delete() }
+            LogRepository.append(context, "RuleRepository.writeRulesSnapshot failed: ${e.message ?: e.javaClass.simpleName}")
+        } catch (e: OutOfMemoryError) {
+            runCatching { tempFile.delete() }
+        }
+    }
+
+    private fun appendRulesToSnapshot(
+        context: Context,
+        newRules: List<BlockRule>,
+        preMtime: Long,
+        preSize: Long,
+        fileAfterAppend: File
+    ) {
+        val snapshot = snapshotFile(context)
+        try {
+            synchronized(snapshotFileLock) {
+                if (!snapshot.exists()) return
+                java.io.RandomAccessFile(snapshot, "rw").use { raf ->
+                    if (raf.length() < SNAPSHOT_HEADER_BYTES) {
+                        snapshot.delete()
+                        return
+                    }
+                    raf.seek(0)
+                    if (raf.readInt() != SNAPSHOT_MAGIC || raf.readInt() != SNAPSHOT_FORMAT_VERSION) {
+                        snapshot.delete()
+                        return
+                    }
+                    val snapMtime = raf.readLong()
+                    val snapSize = raf.readLong()
+                    val snapCount = raf.readInt()
+                    // 快照必须与追加前的 JSON 文件一致，否则丢弃交给后台自愈
+                    if (snapMtime != preMtime || snapSize != preSize || snapCount < 0) {
+                        snapshot.delete()
+                        return
+                    }
+                    val recordStart = raf.length()
+                    raf.seek(recordStart)
+                    DataOutputStream(object : java.io.OutputStream() {
+                        override fun write(b: Int) = raf.write(b)
+                        override fun write(b: ByteArray, off: Int, len: Int) = raf.write(b, off, len)
+                    }).use { out ->
+                        newRules.forEach { writeRuleSnapshot(out, it) }
+                    }
+                    raf.seek(0)
+                    raf.writeLong(fileAfterAppend.lastModified())
+                    raf.writeLong(fileAfterAppend.length())
+                    raf.writeInt(snapCount + newRules.size)
+                }
+            }
+        } catch (e: Exception) {
+            runCatching { snapshot.delete() }
+            LogRepository.append(context, "RuleRepository.appendRulesToSnapshot failed: ${e.message ?: e.javaClass.simpleName}")
+        } catch (e: OutOfMemoryError) {
+            runCatching { snapshot.delete() }
+        }
+    }
+
+    private fun loadRulesSnapshotIfValid(context: Context, file: File): List<BlockRule>? {
+        val snapshot = snapshotFile(context)
+        if (!snapshot.exists()) return null
+        try {
+            DataInputStream(BufferedInputStream(FileInputStream(snapshot), 1 shl 16)).use { input ->
+                if (input.readInt() != SNAPSHOT_MAGIC || input.readInt() != SNAPSHOT_FORMAT_VERSION) return null
+                val lastModified = input.readLong()
+                val length = input.readLong()
+                val count = input.readInt()
+                if (count < 0 || count > 2_000_000) return null
+                if (lastModified != file.lastModified() || length != file.length()) return null
+                if (count > 0) {
+                    val expected = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                        .getInt(KEY_RULE_COUNT, -1)
+                    if (expected >= 0 && expected != count) return null
+                }
+                val rules = ArrayList<BlockRule>(count)
+                repeat(count) {
+                    (readRuleSnapshot(input) ?: return null)?.let(::normalizeRuleFromStorage)?.let { rules += it }
+                }
+                if (rules.size != count) return null
+                LogRepository.append(context, "RuleRepository.snapshot hit: $count rules (binary fast path)")
+                return rules
+            }
+        } catch (e: Exception) {
+            runCatching { snapshot.delete() }
+            LogRepository.append(context, "RuleRepository.snapshot invalid, fallback to json: ${e.message ?: e.javaClass.simpleName}")
+            return null
+        }
+    }
+
+    private fun scheduleSnapshotHeal(context: Context) {
+        if (!snapshotHealRunning.compareAndSet(false, true)) return
+        Thread({
+            try {
+                val appContext = context.applicationContext
+                val file = rulesFile(appContext)
+                if (!file.exists() || file.length() <= 2L) return@Thread
+                val rules = readRulesFile(appContext, file)
+                if (rules.isNotEmpty()) writeRulesSnapshot(appContext, rules, file)
+            } finally {
+                snapshotHealRunning.set(false)
+            }
+        }, "hf-snapshot-heal").apply {
+            isDaemon = true
+            priority = Thread.MIN_PRIORITY
+        }.start()
+    }
+
+    private fun DataOutputStream.writeStringSnapshot(v: String) {
+        val bytes = v.toByteArray(Charsets.UTF_8)
+        writeInt(bytes.size)
+        write(bytes)
+    }
+
+    private fun DataInputStream.readStringSnapshot(): String {
+        val len = readInt()
+        if (len < 0 || len > 1 shl 20) throw java.io.IOException("bad string length: $len")
+        val bytes = ByteArray(len)
+        readFully(bytes)
+        return String(bytes, Charsets.UTF_8)
+    }
+
+    private fun DataOutputStream.writeStringSetSnapshot(v: Set<String>) {
+        writeInt(v.size)
+        v.forEach { writeStringSnapshot(it) }
+    }
+
+    private fun DataInputStream.readStringSetSnapshot(): LinkedHashSet<String> {
+        val size = readInt()
+        if (size < 0 || size > 1_000_000) throw java.io.IOException("bad set size: $size")
+        val set = LinkedHashSet<String>(size)
+        repeat(size) { set += readStringSnapshot() }
+        return set
+    }
+
+    private fun DataOutputStream.writeIntSetSnapshot(v: Set<Int>) {
+        writeInt(v.size)
+        v.forEach { writeInt(it) }
+    }
+
+    private fun DataInputStream.readIntSetSnapshot(): LinkedHashSet<Int> {
+        val size = readInt()
+        if (size < 0 || size > 1_000_000) throw java.io.IOException("bad set size: $size")
+        val set = LinkedHashSet<Int>(size)
+        repeat(size) { set += readInt() }
+        return set
+    }
+
+    private fun DataOutputStream.writeIntRangeSetSnapshot(v: Set<IntRange>) {
+        writeInt(v.size)
+        v.forEach { range ->
+            writeInt(range.first)
+            writeInt(range.last)
+        }
+    }
+
+    private fun DataInputStream.readIntRangeSetSnapshot(): LinkedHashSet<IntRange> {
+        val size = readInt()
+        if (size < 0 || size > 1_000_000) throw java.io.IOException("bad set size: $size")
+        val set = LinkedHashSet<IntRange>(size)
+        repeat(size) {
+            val start = readInt()
+            val end = readInt()
+            set += start..end
+        }
+        return set
+    }
+
+    private fun writeRuleSnapshot(out: DataOutputStream, rule: BlockRule) {
+        var flags = 0L
+        fun bit(index: Int, condition: Boolean) {
+            if (condition) flags = flags or (1L shl index)
+        }
+        bit(0, rule.rawText != null)
+        bit(1, rule.dnsTypes != null)
+        bit(2, rule.excludedDnsTypes != null)
+        bit(3, rule.thirdParty)
+        bit(4, rule.firstParty)
+        bit(5, rule.important)
+        bit(6, rule.redirect)
+        bit(7, rule.domainConstraints != null)
+        bit(8, rule.excludedDomainConstraints.isNotEmpty())
+        bit(9, rule.denyallow.isNotEmpty())
+        bit(10, rule.urlblock)
+        bit(11, rule.requestTypes.isNotEmpty())
+        bit(12, rule.appPackages.isNotEmpty())
+        bit(13, rule.destinationPorts.isNotEmpty())
+        bit(14, rule.sourcePorts.isNotEmpty())
+        bit(15, rule.destinationPortRanges.isNotEmpty())
+        bit(16, rule.sourcePortRanges.isNotEmpty())
+        bit(17, rule.keywordPattern != null)
+        bit(18, rule.pathPattern != null)
+        bit(19, rule.ipCidr != null)
+        bit(20, rule.regexPattern != null)
+        bit(21, rule.cosmeticSelector != null)
+        bit(22, rule.cosmeticException)
+        bit(23, rule.exceptionRule)
+        bit(24, rule.removeParams.isNotEmpty())
+        bit(25, rule.removeParamRegexes.isNotEmpty())
+        bit(26, rule.removeRequestHeaders.isNotEmpty())
+        bit(27, rule.setRequestHeaders.isNotEmpty())
+        bit(28, rule.replaceRules.isNotEmpty())
+        bit(29, rule.cspValue != null)
+        bit(30, rule.redirectResource != null)
+        bit(31, rule.jsInjectRules.isNotEmpty())
+        bit(32, rule.cookieRemove.isNotEmpty())
+        bit(33, rule.cookieSet.isNotEmpty())
+        bit(34, rule.toDomains.isNotEmpty())
+        bit(35, rule.cname)
+        bit(36, rule.emptyResponse)
+        bit(37, rule.genericblock)
+        bit(38, rule.specifichide)
+        bit(39, rule.generichide)
+        bit(40, rule.dnsrewrite != null)
+        bit(41, rule.fromDomains.isNotEmpty())
+        bit(42, rule.excludedFromDomains.isNotEmpty())
+        bit(43, rule.network)
+        bit(44, rule.blockIpv6)
+        bit(45, rule.blockIpv4)
+        bit(46, rule.ctags.isNotEmpty())
+        bit(47, rule.generichideException)
+        bit(48, rule.remoteSourceId != null)
+        bit(49, rule.jsonPrunePaths.isNotEmpty())
+        bit(50, rule.hlsRules.isNotEmpty())
+        bit(51, rule.methods.isNotEmpty())
+        bit(52, rule.headerMatchRules.isNotEmpty())
+        bit(53, rule.permissions.isNotEmpty())
+        out.writeLong(flags)
+        out.writeStringSnapshot(rule.id)
+        out.writeStringSnapshot(rule.domain)
+        out.writeStringSnapshot(rule.vendor)
+        out.writeByte(rule.source.ordinal)
+        if (rule.rawText != null) out.writeStringSnapshot(rule.rawText!!)
+        if (rule.dnsTypes != null) out.writeIntSetSnapshot(rule.dnsTypes!!)
+        if (rule.excludedDnsTypes != null) out.writeIntSetSnapshot(rule.excludedDnsTypes!!)
+        if (rule.domainConstraints != null) out.writeStringSetSnapshot(rule.domainConstraints!!)
+        if (rule.excludedDomainConstraints.isNotEmpty()) out.writeStringSetSnapshot(rule.excludedDomainConstraints)
+        if (rule.denyallow.isNotEmpty()) out.writeStringSetSnapshot(rule.denyallow)
+        if (rule.requestTypes.isNotEmpty()) out.writeStringSetSnapshot(rule.requestTypes)
+        if (rule.appPackages.isNotEmpty()) out.writeStringSetSnapshot(rule.appPackages)
+        if (rule.destinationPorts.isNotEmpty()) out.writeIntSetSnapshot(rule.destinationPorts)
+        if (rule.sourcePorts.isNotEmpty()) out.writeIntSetSnapshot(rule.sourcePorts)
+        if (rule.destinationPortRanges.isNotEmpty()) out.writeIntRangeSetSnapshot(rule.destinationPortRanges)
+        if (rule.sourcePortRanges.isNotEmpty()) out.writeIntRangeSetSnapshot(rule.sourcePortRanges)
+        if (rule.keywordPattern != null) out.writeStringSnapshot(rule.keywordPattern!!)
+        if (rule.pathPattern != null) out.writeStringSnapshot(rule.pathPattern!!)
+        if (rule.ipCidr != null) out.writeStringSnapshot(rule.ipCidr!!)
+        if (rule.regexPattern != null) out.writeStringSnapshot(rule.regexPattern!!)
+        if (rule.cosmeticSelector != null) out.writeStringSnapshot(rule.cosmeticSelector!!)
+        if (rule.removeParams.isNotEmpty()) out.writeStringSetSnapshot(rule.removeParams)
+        if (rule.removeParamRegexes.isNotEmpty()) out.writeStringSetSnapshot(rule.removeParamRegexes)
+        if (rule.removeRequestHeaders.isNotEmpty()) out.writeStringSetSnapshot(rule.removeRequestHeaders)
+        if (rule.setRequestHeaders.isNotEmpty()) out.writeStringSetSnapshot(rule.setRequestHeaders)
+        if (rule.replaceRules.isNotEmpty()) out.writeStringSetSnapshot(rule.replaceRules)
+        if (rule.cspValue != null) out.writeStringSnapshot(rule.cspValue!!)
+        if (rule.redirectResource != null) out.writeStringSnapshot(rule.redirectResource!!)
+        if (rule.jsInjectRules.isNotEmpty()) out.writeStringSetSnapshot(rule.jsInjectRules)
+        if (rule.cookieRemove.isNotEmpty()) out.writeStringSetSnapshot(rule.cookieRemove)
+        if (rule.cookieSet.isNotEmpty()) out.writeStringSetSnapshot(rule.cookieSet)
+        if (rule.toDomains.isNotEmpty()) out.writeStringSetSnapshot(rule.toDomains)
+        if (rule.dnsrewrite != null) out.writeStringSnapshot(rule.dnsrewrite!!)
+        if (rule.fromDomains.isNotEmpty()) out.writeStringSetSnapshot(rule.fromDomains)
+        if (rule.excludedFromDomains.isNotEmpty()) out.writeStringSetSnapshot(rule.excludedFromDomains)
+        if (rule.ctags.isNotEmpty()) out.writeStringSetSnapshot(rule.ctags)
+        if (rule.remoteSourceId != null) out.writeStringSnapshot(rule.remoteSourceId!!)
+        if (rule.jsonPrunePaths.isNotEmpty()) out.writeStringSetSnapshot(rule.jsonPrunePaths)
+        if (rule.hlsRules.isNotEmpty()) out.writeStringSetSnapshot(rule.hlsRules)
+        if (rule.methods.isNotEmpty()) out.writeStringSetSnapshot(rule.methods)
+        if (rule.headerMatchRules.isNotEmpty()) out.writeStringSetSnapshot(rule.headerMatchRules)
+        if (rule.permissions.isNotEmpty()) out.writeStringSetSnapshot(rule.permissions)
+    }
+
+    private fun readRuleSnapshot(input: DataInputStream): BlockRule? {
+        val flags = input.readLong()
+        fun has(index: Int) = flags and (1L shl index) != 0L
+        val id = input.readStringSnapshot()
+        val domain = input.readStringSnapshot()
+        val vendor = input.readStringSnapshot()
+        val sourceOrdinal = input.readByte().toInt()
+        val source = ruleSourceValues.getOrNull(sourceOrdinal) ?: return null
+        return BlockRule(
+            id = id,
+            domain = domain,
+            vendor = vendor,
+            source = source,
+            rawText = if (has(0)) input.readStringSnapshot() else null,
+            dnsTypes = if (has(1)) input.readIntSetSnapshot() else null,
+            excludedDnsTypes = if (has(2)) input.readIntSetSnapshot() else null,
+            thirdParty = has(3),
+            firstParty = has(4),
+            important = has(5),
+            redirect = has(6),
+            domainConstraints = if (has(7)) input.readStringSetSnapshot() else null,
+            excludedDomainConstraints = if (has(8)) input.readStringSetSnapshot() else emptySet(),
+            denyallow = if (has(9)) input.readStringSetSnapshot() else emptySet(),
+            urlblock = has(10),
+            requestTypes = if (has(11)) input.readStringSetSnapshot() else emptySet(),
+            appPackages = if (has(12)) input.readStringSetSnapshot() else emptySet(),
+            destinationPorts = if (has(13)) input.readIntSetSnapshot() else emptySet(),
+            sourcePorts = if (has(14)) input.readIntSetSnapshot() else emptySet(),
+            destinationPortRanges = if (has(15)) input.readIntRangeSetSnapshot() else emptySet(),
+            sourcePortRanges = if (has(16)) input.readIntRangeSetSnapshot() else emptySet(),
+            keywordPattern = if (has(17)) input.readStringSnapshot() else null,
+            pathPattern = if (has(18)) input.readStringSnapshot() else null,
+            ipCidr = if (has(19)) input.readStringSnapshot() else null,
+            regexPattern = if (has(20)) input.readStringSnapshot() else null,
+            cosmeticSelector = if (has(21)) input.readStringSnapshot() else null,
+            cosmeticException = has(22),
+            exceptionRule = has(23),
+            removeParams = if (has(24)) input.readStringSetSnapshot() else emptySet(),
+            removeParamRegexes = if (has(25)) input.readStringSetSnapshot() else emptySet(),
+            removeRequestHeaders = if (has(26)) input.readStringSetSnapshot() else emptySet(),
+            setRequestHeaders = if (has(27)) input.readStringSetSnapshot() else emptySet(),
+            replaceRules = if (has(28)) input.readStringSetSnapshot() else emptySet(),
+            cspValue = if (has(29)) input.readStringSnapshot() else null,
+            redirectResource = if (has(30)) input.readStringSnapshot() else null,
+            jsInjectRules = if (has(31)) input.readStringSetSnapshot() else emptySet(),
+            cookieRemove = if (has(32)) input.readStringSetSnapshot() else emptySet(),
+            cookieSet = if (has(33)) input.readStringSetSnapshot() else emptySet(),
+            toDomains = if (has(34)) input.readStringSetSnapshot() else emptySet(),
+            cname = has(35),
+            emptyResponse = has(36),
+            genericblock = has(37),
+            specifichide = has(38),
+            generichide = has(39),
+            dnsrewrite = if (has(40)) input.readStringSnapshot() else null,
+            fromDomains = if (has(41)) input.readStringSetSnapshot() else emptySet(),
+            excludedFromDomains = if (has(42)) input.readStringSetSnapshot() else emptySet(),
+            network = has(43),
+            blockIpv6 = has(44),
+            blockIpv4 = has(45),
+            ctags = if (has(46)) input.readStringSetSnapshot() else emptySet(),
+            generichideException = has(47),
+            remoteSourceId = if (has(48)) input.readStringSnapshot() else null,
+            jsonPrunePaths = if (has(49)) input.readStringSetSnapshot() else emptySet(),
+            hlsRules = if (has(50)) input.readStringSetSnapshot() else emptySet(),
+            methods = if (has(51)) input.readStringSetSnapshot() else emptySet(),
+            headerMatchRules = if (has(52)) input.readStringSetSnapshot() else emptySet(),
+            permissions = if (has(53)) input.readStringSetSnapshot() else emptySet()
+        )
+    }
+
     private fun readLegacyRulesJson(context: Context, prefs: android.content.SharedPreferences): String {
         val file = rulesFile(context)
         val legacyJson = prefs.getString(KEY_RULES, "[]") ?: "[]"
@@ -7337,6 +7742,7 @@ object RuleRepository {
             .remove(KEY_RULES)
             .putInt(KEY_RULE_COUNT, rules.size)
             .apply()
+        writeRulesSnapshot(context, rules, file)
     }
 
     private class StreamingRulesRewrite(
