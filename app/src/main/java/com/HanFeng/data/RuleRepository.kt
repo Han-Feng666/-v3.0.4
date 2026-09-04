@@ -971,45 +971,102 @@ object RuleRepository {
                 return emptyList()
             }
             var migrated = false
+            // 加载路径只做轻量规范化（补 id），禁止任何逐条重计算——
+            // 厂商重算等重迁移统一走 reclassifyDefaultVendorsInBackground，
+            // 否则大规则集下规则页会卡住数分钟
             val rules = loadedRules
                 .map {
                     val stableId = it.id.trim().ifBlank {
                         migrated = true
                         UUID.randomUUID().toString()
                     }
-                    // 存量修复：旧版本导入的简单域名规则 vendor 硬编码为"其它"，
-                    // 加载时按域名重算真实厂商（一次性迁移，重算结果随 migrated 落盘）
-                    val vendor = normalizeVendorName(it.vendor)
-                    val resolvedVendor = if (vendor == DEFAULT_VENDOR && !it.exceptionRule &&
-                        it.regexPattern == null && it.cosmeticSelector == null && it.ipCidr == null
-                    ) {
-                        val classified = classifyVendorSimple(context, it.domain)
-                        if (classified != null && classified != DEFAULT_VENDOR) {
-                            migrated = true
-                            classified
-                        } else {
-                            vendor
-                        }
+                    if (stableId == it.id) {
+                        it
                     } else {
-                        vendor
+                        copyBlockRule(
+                            it,
+                            id = stableId,
+                            vendor = normalizeVendorName(it.vendor),
+                            source = if (it.source == RuleSource.REFERENCE) RuleSource.IMPORTED else it.source
+                        )
                     }
-                    copyBlockRule(
-                        it,
-                        id = stableId,
-                        vendor = resolvedVendor,
-                        source = if (it.source == RuleSource.REFERENCE) RuleSource.IMPORTED else it.source
-                    )
                 }
-                .sortedBy { it.domain }
+            val sortedRules = if (loadedRules.size <= 50_000) {
+                rules.sortedBy { it.domain }
+            } else {
+                // 超大规则集跳过排序：列表按厂商分组展示，域名序对用户无感知差异，
+                // 排序 20 万条的成本（多次比较 + 装箱）远超收益
+                rules
+            }
             if (migrated) {
-                runCatching { writeRulesFile(context, rules) }.onFailure { e ->
+                runCatching { writeRulesFile(context, sortedRules) }.onFailure { e ->
                     LogRepository.append(context, "RuleRepository.getRules migrate write failed: ${e.message ?: e.javaClass.simpleName}")
                 }
             }
-            cachedRules = rules
-            return rules
+            cachedRules = sortedRules
+            return sortedRules
         }
     }
+
+    /**
+     * 存量"其它"厂商规则的后台批量重算：分批 classify，全部完成后一次落盘。
+     * 由 UI 在首帧渲染完成后触发，避免阻塞规则列表加载。
+     * @return 重算出真实厂商的条数（0 表示无需迁移）
+     */
+    fun reclassifyDefaultVendorsInBackground(context: Context, onDone: (Int) -> Unit = {}) {
+        synchronized(reclassifyLock) {
+            if (reclassifyRunning) return
+            reclassifyRunning = true
+        }
+        Thread({
+            var changed = 0
+            try {
+                val appContext = context.applicationContext
+                val rules = getRules(appContext)
+                if (rules.size > MAX_RECLASSIFY_RULES) return@Thread
+                val updated = ArrayList<BlockRule>(rules.size)
+                var batch = 0
+                for (rule in rules) {
+                    val vendor = normalizeVendorName(rule.vendor)
+                    if (vendor == DEFAULT_VENDOR && !rule.exceptionRule &&
+                        rule.regexPattern == null && rule.cosmeticSelector == null && rule.ipCidr == null
+                    ) {
+                        val classified = classifyVendorSimple(appContext, rule.domain)
+                        if (classified != null && classified != DEFAULT_VENDOR) {
+                            updated += copyBlockRule(rule, vendor = classified)
+                            changed++
+                            continue
+                        }
+                    }
+                    updated += rule
+                    batch++
+                    if (batch % 5000 == 0) Thread.sleep(20)  // 分批让出 CPU，保持界面流畅
+                }
+                if (changed > 0) {
+                    val fixed = updated.sortedBy { it.domain }
+                    synchronized(cacheLock) {
+                        cachedRules = fixed
+                        cachedRuleCount = fixed.size
+                        // 厂商映射相关缓存失效，分组与统计即时反映新归类
+                        cachedVendorMap.clear()
+                    }
+                    runCatching { writeRulesFile(appContext, fixed) }
+                    LogRepository.append(appContext, "RuleRepository: reclassified $changed vendor entries")
+                }
+            } catch (t: Throwable) {
+                LogRepository.append(context, "reclassify failed: ${t.message ?: t.javaClass.simpleName}")
+            } finally {
+                synchronized(reclassifyLock) { reclassifyRunning = false }
+                if (changed > 0) onDone(changed)
+            }
+        }, "hf-vendor-reclassify").apply {
+            isDaemon = true
+            priority = Thread.MIN_PRIORITY
+        }.start()
+    }
+    private val reclassifyLock = Any()
+    @Volatile private var reclassifyRunning = false
+    private val MAX_RECLASSIFY_RULES = 200_000
 
     fun getRuleCount(context: Context): Int {
         cachedRuleCount?.let { return it }
@@ -1040,9 +1097,14 @@ object RuleRepository {
     private val dnsBlockDecisionLock = Any()
     private const val DECISION_TTL_MS = 10000L // 10 秒缓存
 
+    private val prewarmLock = Any()
+
     fun prewarmCaches(context: Context) {
         if (cachedSimpleDomainIndex != null) return
-        buildAllCachesFromFile(context)
+        synchronized(prewarmLock) {
+            if (cachedSimpleDomainIndex != null) return
+            buildAllCachesFromFile(context)
+        }
     }
 
     private fun buildAllCachesFromFile(context: Context) {
@@ -1072,6 +1134,8 @@ object RuleRepository {
         val importantBlocked = linkedSetOf<String>()
         val exceptions = linkedSetOf<String>()
         val nonSimpleRules = mutableListOf<BlockRule>()
+        // 全量收集：索引构建与规则列表共用同一次文件解析，getRules 不再二次读文件
+        val allRules = mutableListOf<BlockRule>()
         val regexRules = mutableListOf<BlockRule>()
         val keywordRules = mutableListOf<BlockRule>()
         val cosmeticRules = mutableListOf<BlockRule>()
@@ -1089,6 +1153,7 @@ object RuleRepository {
                             ?: continue
                         ruleCount++
                         if (ruleCount > MAX_CACHEABLE_RULES || isImportHeapLow()) continue
+                        allRules += rule
                         if (isSimpleDomainRule(rule)) {
                             if (rule.exceptionRule) {
                                 exceptions += rule.domain
@@ -1157,6 +1222,10 @@ object RuleRepository {
             cachedIpCidrRules = ipCidrRules
             cachedPortOnlyRules = portOnlyRules
             cachedCnameRuleIndex = cnameRules.associateBy { it.domain }
+            // 规则列表与索引共享解析结果：后续 getRules 直接命中，文件只解析一次
+            if (cachedRules == null && allRules.isNotEmpty()) {
+                cachedRules = if (allRules.size <= 50_000) allRules.sortedBy { it.domain } else allRules
+            }
             cachedRuleCount = ruleCount
             cachedWhitelistHits.clear()
             cachedGeneralAdTrafficHits.clear()
