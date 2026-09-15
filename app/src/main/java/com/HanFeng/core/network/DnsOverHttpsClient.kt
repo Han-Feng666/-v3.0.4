@@ -21,6 +21,11 @@ object DnsOverHttpsClient {
         val response: ByteArray
     )
 
+    private const val NETWORK_CACHE_MILLIS = 10_000L
+
+    @Volatile private var cachedNetwork: android.net.Network? = null
+    @Volatile private var cachedNetworkAt = 0L
+
     fun query(context: Context, dnsMessage: ByteArray, serverUrl: String, timeoutMs: Int = 2000): DohResult? {
         val network = selectNonVpnNetwork(context) ?: return null
         return runCatching {
@@ -51,11 +56,26 @@ object DnsOverHttpsClient {
     @Suppress("DEPRECATION")
     private fun selectNonVpnNetwork(context: Context): android.net.Network? {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return null
+        // allNetworks + getNetworkCapabilities 是 binder 调用，缓存 10 秒，
+        // 避免一次 DoH 兜底对每个端点都重新枚举一遍网络
+        val now = System.currentTimeMillis()
+        cachedNetwork?.let { cached ->
+            if (now - cachedNetworkAt < NETWORK_CACHE_MILLIS) return cached
+        }
         val nonVpn = cm.allNetworks.firstOrNull { network ->
             val caps = cm.getNetworkCapabilities(network) ?: return@firstOrNull false
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
             !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        } ?: cm.activeNetwork
+        if (nonVpn != null) {
+            cachedNetwork = nonVpn
+            cachedNetworkAt = now
         }
-        return nonVpn ?: cm.activeNetwork
+        return nonVpn
+    }
+
+    fun invalidateNetworkCache() {
+        cachedNetwork = null
+        cachedNetworkAt = 0L
     }
 }

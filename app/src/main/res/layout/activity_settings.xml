@@ -663,6 +663,45 @@
                 android:layout_marginBottom="16dp"
                 android:text="导出 MITM 证书" />
 
+            <!-- ========== 智能识别广告 ========== -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:background="@drawable/bg_panel"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="16dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="智能识别未知广告"
+                        android:textColor="@color/hf_text_primary"
+                        android:textSize="16sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="按行为特征（空 SNI、TLS 指纹、QUIC 降级、HTTPDNS、共享 IP 聚类等）自动识别规则库没有的新广告域名并拦截，可在「拦截与放行」里逐条入库或放行。白名单与登录支付类域名不参与。"
+                        android:textColor="@color/hf_text_secondary"
+                        android:textSize="12sp" />
+
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/switchAutoLearnAd"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
             <!-- ========== 热点广告拦截 ========== -->
             <TextView
                 android:layout_width="match_parent"

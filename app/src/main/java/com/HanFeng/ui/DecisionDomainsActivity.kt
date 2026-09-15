@@ -28,6 +28,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.HanFeng.core.network.NetworkKernel
+import com.HanFeng.core.network.ScoredBlockCache
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -37,6 +38,8 @@ class DecisionDomainsActivity : BaseActivity() {
     private lateinit var adapter: DecisionDomainAdapter
     private var allEntries: List<LogRepository.DomainDecisionEntry> = emptyList()
     private var filter: LogRepository.DomainDecisionType? = null
+    private var learnedOnly = false
+    private var learnedMap: Map<String, ScoredBlockCache.Entry> = emptyMap()
     private var searchJob: Job? = null
     // SimpleDateFormat accessed only from main thread; no ThreadLocal needed
     private val dateFormat = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault())
@@ -57,9 +60,12 @@ class DecisionDomainsActivity : BaseActivity() {
             view.setPadding(view.paddingLeft, bars.top + 8.dp, view.paddingRight, bars.bottom + 16.dp)
             insets
         }
-        adapter = DecisionDomainAdapter(dateFormat) { entry ->
-            toggleDecision(entry)
-        }
+        adapter = DecisionDomainAdapter(
+            dateFormat = dateFormat,
+            learnedLookup = { domain -> entryForLearned(domain) },
+            onToggleRequest = { entry -> toggleDecision(entry) },
+            onPersistRequest = { domain -> persistLearnedDomain(domain) }
+        )
         binding.list.layoutManager = LinearLayoutManager(this)
         binding.list.adapter = adapter
         binding.btnBack.setOnClickListener { finish() }
@@ -75,35 +81,6 @@ class DecisionDomainsActivity : BaseActivity() {
             filter = null
             applyFilters()
         }
-        // 学习域名一键入库：把 MITM/流量学习引擎命中的域名持久化为用户拦截规则
-        val learnedCount = runCatching {
-            com.HanFeng.core.network.ScoredBlockCache.exportLearnedDomains().size
-        }.getOrDefault(0)
-        if (learnedCount > 0) {
-            binding.btnPersistLearned.isVisible = true
-            binding.btnPersistLearned.text = "学习域名一键入库（$learnedCount 条）"
-            binding.btnPersistLearned.setOnClickListener {
-                StableDialog.builder(this)
-                    .setTitle("学习域名入库")
-                    .setMessage("将 $learnedCount 条学习命中的域名持久保存为拦截规则？入库后即使学习缓存过期也继续拦截。")
-                    .setPositiveButton("入库") { _, _ ->
-                        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            val added = runCatching {
-                                com.HanFeng.core.network.ScoredBlockCache.persistLearnedDomainsToRules(applicationContext)
-                            }.getOrDefault(0)
-                            launch(kotlinx.coroutines.Dispatchers.Main) {
-                                Toast.makeText(
-                                    this@DecisionDomainsActivity,
-                                    if (added > 0) "已入库 $added 条学习域名规则" else "没有新增规则（可能已存在）",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        }
-                    }
-                    .setNegativeButton("取消", null)
-                    .showSafely(this, "persist-learned-dialog")
-            }
-        }
         binding.btnFilterBlocked.setOnClickListener {
             filter = LogRepository.DomainDecisionType.BLOCKED
             applyFilters()
@@ -112,7 +89,71 @@ class DecisionDomainsActivity : BaseActivity() {
             filter = LogRepository.DomainDecisionType.ALLOWED
             applyFilters()
         }
+        // 只看智能识别命中的域名：这类条目带识别依据与分数，可逐条入库或撤销
+        binding.btnFilterLearned.setOnClickListener {
+            learnedOnly = !learnedOnly
+            applyFilters()
+        }
+        // 学习域名一键入库：把 MITM/流量学习引擎命中的域名持久化为用户拦截规则
+        binding.btnPersistLearned.setOnClickListener { confirmPersistAllLearned() }
         loadEntries()
+    }
+
+    /** 学习缓存变化后刷新“一键入库”按钮文案与可见性 */
+    private fun refreshLearnedButton() {
+        val learnedCount = learnedMap.size
+        if (learnedCount <= 0) {
+            binding.btnPersistLearned.isVisible = false
+            return
+        }
+        binding.btnPersistLearned.isVisible = true
+        binding.btnPersistLearned.text = "学习域名一键入库（$learnedCount 条）"
+    }
+
+    private fun entryForLearned(domain: String): ScoredBlockCache.Entry? =
+        if (domain.isBlank()) null else learnedMap[domain.trim().lowercase()]
+
+    private fun confirmPersistAllLearned() {
+        val count = learnedMap.size
+        if (count <= 0) {
+            Toast.makeText(this, "当前没有可入库的学习域名", Toast.LENGTH_SHORT).show()
+            return
+        }
+        StableDialog.builder(this)
+            .setTitle("学习域名入库")
+            .setMessage("将 $count 条学习命中的域名持久保存为拦截规则？入库后即使学习缓存过期也继续拦截。")
+            .setPositiveButton("入库") { _, _ ->
+                lifecycleScope.launch {
+                    val added = withContext(Dispatchers.IO) {
+                        runCatching { ScoredBlockCache.persistLearnedDomainsToRules(applicationContext) }
+                            .getOrDefault(0)
+                    }
+                    Toast.makeText(
+                        this@DecisionDomainsActivity,
+                        if (added > 0) "已入库 $added 条学习域名规则" else "没有新增规则（可能已存在）",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    loadEntries()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .showSafely(this, "persist-learned-dialog")
+    }
+
+    /** 单条学习域名入库（列表里的“入库”按钮） */
+    private fun persistLearnedDomain(domain: String) {
+        lifecycleScope.launch {
+            val added = withContext(Dispatchers.IO) {
+                runCatching { ScoredBlockCache.persistDomainToRules(applicationContext, domain) }
+                    .getOrDefault(false)
+            }
+            Toast.makeText(
+                this@DecisionDomainsActivity,
+                if (added) "$domain 已入库为拦截规则" else "$domain 入库失败（规则可能已存在）",
+                Toast.LENGTH_SHORT
+            ).show()
+            loadEntries()
+        }
     }
 
     override fun onResume() {
@@ -137,6 +178,10 @@ class DecisionDomainsActivity : BaseActivity() {
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
                 LogRepository.toggleDomainDecision(appContext, entry.domain, entry.type)
+                // 手工放行时同时撤销学习缓存里的拦截条目，否则下一轮查询仍会被 sinkhole
+                if (newAction == "放行") {
+                    ScoredBlockCache.dropDomain(entry.domain)
+                }
             }
             loadEntries()
             android.widget.Toast.makeText(appContext, "已将该域名切换为 $newAction，已实时生效", android.widget.Toast.LENGTH_SHORT).show()
@@ -153,12 +198,20 @@ class DecisionDomainsActivity : BaseActivity() {
 
     private fun loadEntries() {
         lifecycleScope.launch {
-            val entries = withContext(Dispatchers.IO) {
-                runCatching { LogRepository.getDomainDecisionEntries(applicationContext) }
+            val loaded = withContext(Dispatchers.IO) {
+                val entries = runCatching { LogRepository.getDomainDecisionEntries(applicationContext) }
                     .getOrElse { emptyList() }
+                val learned = runCatching {
+                    ScoredBlockCache.exportLearnedDomains().associateBy({ it.domain }, {
+                        ScoredBlockCache.Entry(expiresAt = it.expiresAt, score = it.score, vendor = it.vendor, reason = it.reason)
+                    })
+                }.getOrDefault(emptyMap())
+                entries to learned
             }
             if (isFinishing || isDestroyed) return@launch
-            allEntries = entries
+            allEntries = loaded.first
+            learnedMap = loaded.second
+            refreshLearnedButton()
             applyFilters()
         }
     }
@@ -167,17 +220,26 @@ class DecisionDomainsActivity : BaseActivity() {
         val query = binding.searchInput.text?.toString().orEmpty().trim().lowercase()
         val filtered = allEntries.filter { entry ->
             val typeMatched = filter == null || entry.type == filter
+            val learnedMatched = !learnedOnly || entryForLearned(entry.domain) != null
             val queryMatched = query.isBlank() ||
                 entry.identifier.lowercase().contains(query) ||
                 entry.domain.lowercase().contains(query) ||
                 entry.message.lowercase().contains(query)
-            typeMatched && queryMatched
+            typeMatched && learnedMatched && queryMatched
         }
         adapter.submitList(filtered)
         val blockedCount = filtered.count { it.type == LogRepository.DomainDecisionType.BLOCKED }
         val allowedCount = filtered.count { it.type == LogRepository.DomainDecisionType.ALLOWED }
-        binding.summaryText.text = "当前显示 ${filtered.size} 条，拦截 ${blockedCount} 条，放行 ${allowedCount} 条"
+        val learnedHitCount = filtered.count { entryForLearned(it.domain) != null }
+        binding.summaryText.text = buildString {
+            append("当前显示 ${filtered.size} 条，拦截 ${blockedCount} 条，放行 ${allowedCount} 条")
+            if (learnedHitCount > 0) append("  智能识别 ${learnedHitCount} 条")
+            append("  学习缓存 ${learnedMap.size} 条")
+        }
         binding.emptyText.visibility = if (filtered.isEmpty()) View.VISIBLE else View.GONE
+        if (filtered.isEmpty() && learnedOnly) {
+            binding.emptyText.text = "当前没有智能识别命中的域名（识别依赖 TLS 指纹、空 SNI、QUIC 降级、共享 IP 聚类等行为特征）"
+        }
         updateFilterButtons()
     }
 
@@ -185,6 +247,7 @@ class DecisionDomainsActivity : BaseActivity() {
         updateFilterButton(binding.btnFilterAll, filter == null)
         updateFilterButton(binding.btnFilterBlocked, filter == LogRepository.DomainDecisionType.BLOCKED)
         updateFilterButton(binding.btnFilterAllowed, filter == LogRepository.DomainDecisionType.ALLOWED)
+        updateFilterButton(binding.btnFilterLearned, learnedOnly)
     }
 
     private fun updateFilterButton(view: View, selected: Boolean) {
@@ -215,10 +278,18 @@ class DecisionDomainsActivity : BaseActivity() {
 
     private class DecisionDomainAdapter(
         private val dateFormat: SimpleDateFormat,
-        private val onToggleRequest: (LogRepository.DomainDecisionEntry) -> Unit
+        private val learnedLookup: (String) -> ScoredBlockCache.Entry?,
+        private val onToggleRequest: (LogRepository.DomainDecisionEntry) -> Unit,
+        private val onPersistRequest: (String) -> Unit
     ) : ListAdapter<LogRepository.DomainDecisionEntry, DecisionDomainAdapter.ViewHolder>(DIFF) {
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-            return ViewHolder(ItemDecisionDomainBinding.inflate(LayoutInflater.from(parent.context), parent, false), dateFormat, onToggleRequest)
+            return ViewHolder(
+                ItemDecisionDomainBinding.inflate(LayoutInflater.from(parent.context), parent, false),
+                dateFormat,
+                learnedLookup,
+                onToggleRequest,
+                onPersistRequest
+            )
         }
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
@@ -228,7 +299,9 @@ class DecisionDomainsActivity : BaseActivity() {
         class ViewHolder(
             private val binding: ItemDecisionDomainBinding,
             private val dateFormat: SimpleDateFormat,
-            private val onToggleRequest: (LogRepository.DomainDecisionEntry) -> Unit
+            private val learnedLookup: (String) -> ScoredBlockCache.Entry?,
+            private val onToggleRequest: (LogRepository.DomainDecisionEntry) -> Unit,
+            private val onPersistRequest: (String) -> Unit
         ) : RecyclerView.ViewHolder(binding.root) {
             fun bind(item: LogRepository.DomainDecisionEntry) {
                 val isDomain = item.scope == LogRepository.DecisionScope.DOMAIN
@@ -256,7 +329,23 @@ class DecisionDomainsActivity : BaseActivity() {
                 )
                 binding.textAppName.text = item.appName
                 binding.textTime.text = dateFormat.format(Date(item.timestamp))
-                
+
+                // 学习引擎命中的条目额外展示识别依据，并提供单条入库入口
+                val learnedEntry = if (isDomain) learnedLookup(item.domain) else null
+                if (learnedEntry != null) {
+                    binding.textNote.isVisible = true
+                    binding.textNote.text = buildString {
+                        append("智能识别 置信度 ${learnedEntry.score}")
+                        if (learnedEntry.reason.isNotBlank()) append("  依据 ${learnedEntry.reason}")
+                        append("  ${((learnedEntry.expiresAt - System.currentTimeMillis()) / 60_000L).coerceAtLeast(0)} 分钟后失效")
+                    }
+                    binding.btnRuleAction.isVisible = true
+                    binding.btnRuleAction.setOnClickListener { onPersistRequest(item.domain) }
+                } else {
+                    binding.textNote.isVisible = false
+                    binding.btnRuleAction.isVisible = false
+                    binding.btnRuleAction.setOnClickListener(null)
+                }
                 if (isDomain) {
                     // 仅域名类事件支持长按手工切换
                     binding.root.setOnLongClickListener {

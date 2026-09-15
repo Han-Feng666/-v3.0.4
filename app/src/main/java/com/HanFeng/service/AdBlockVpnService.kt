@@ -35,7 +35,6 @@ import com.HanFeng.core.network.DnsRuntimeSupport
 import com.HanFeng.core.network.BridgeSocketSupport
 import com.HanFeng.core.network.BridgeSessionSupport
 import com.HanFeng.core.network.DnsOverHttpsClient
-import com.HanFeng.core.network.DecisionLogSupport
 import com.HanFeng.core.network.BridgeConnectionPool
 import com.HanFeng.core.network.BridgeFlowStateSupport
 import com.HanFeng.core.network.BridgeFailureSupport
@@ -125,7 +124,10 @@ class AdBlockVpnService : VpnService() {
     private val appLabelCache = ConcurrentHashMap<Int, String>(VpnConstants.APP_LABEL_CACHE_MAX_SIZE)
     private val vendorHintCache = ConcurrentHashMap<String, String>(VpnConstants.VENDOR_HINT_CACHE_MAX_SIZE)
     private val dnsResponseCache = java.util.Collections.synchronizedMap(LinkedHashMap<String, DnsRuntimeSupport.CachedDnsResponse>(VpnConstants.DNS_RESPONSE_CACHE_MAX_SIZE, 0.75f, true)) as MutableMap<String, DnsRuntimeSupport.CachedDnsResponse>
-    private val decisionLogCache = java.util.Collections.synchronizedMap(LinkedHashMap<String, Long>(VpnConstants.DECISION_LOG_CACHE_MAX_SIZE, 0.75f, true)) as MutableMap<String, Long>
+    // 日志节流表改用无锁 ConcurrentHashMap：热路径（DNS worker×2 + 包循环 + drain 协程）
+    // 高频调用 logDecisionOnce，原先的 accessOrder LinkedHashMap 每次读取都是结构修改，
+    // 需要同步锁且会持续抖动 LRU，多线程下形成锁竞争
+    private val decisionLogCache = java.util.concurrent.ConcurrentHashMap<String, Long>(VpnConstants.DECISION_LOG_CACHE_MAX_SIZE)
     private val adIpTargetCache = java.util.Collections.synchronizedMap(LinkedHashMap<String, AdIpTarget>(VpnConstants.AD_IP_TARGET_CACHE_MAX_SIZE, 0.75f, true)) as MutableMap<String, AdIpTarget>
     private val httpDecryptIpCache = java.util.Collections.synchronizedMap(LinkedHashMap<String, HttpDecryptTarget>(VpnConstants.HTTP_DECRYPT_IP_CACHE_MAX_SIZE, 0.75f, true)) as MutableMap<String, HttpDecryptTarget>
     private val httpsDecryptIpCache = java.util.Collections.synchronizedMap(LinkedHashMap<String, HttpsDecryptTarget>(VpnConstants.HTTPS_DECRYPT_IP_CACHE_MAX_SIZE, 0.75f, true)) as MutableMap<String, HttpsDecryptTarget>
@@ -168,6 +170,7 @@ class AdBlockVpnService : VpnService() {
     @Volatile private var lastQuicRoutePruneAt = 0L
     @Volatile private var lastRouteCachePruneCheckAt = 0L
     @Volatile private var lastUnderlyingNetworkRefreshAt = 0L
+    @Volatile private var lastDecisionLogPruneAt = 0L
     @Volatile private var tunOutputStream: FileOutputStream? = null
 
     // DNS Async Worker — 将阻塞的 DNS 上游查询从主线程剥离
@@ -182,12 +185,12 @@ class AdBlockVpnService : VpnService() {
             android.os.Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND)
             while (dnsWorkerActive && isRunning) {
                 try {
-                    val task = dnsTaskIn.poll(200, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    val task = dnsTaskIn.poll(
+                        DNS_WORKER_IDLE_POLL_MILLIS,
+                        java.util.concurrent.TimeUnit.MILLISECONDS
+                    )
                     if (task != null && task.generation == activeTunGeneration) {
-                        val result = processDnsTaskAsync(task)
-                        if (result != null) {
-                            dnsResultOut.offer(result)
-                        }
+                        processDnsTask(task)
                     }
                 } catch (_: InterruptedException) {
                     break
@@ -198,18 +201,18 @@ class AdBlockVpnService : VpnService() {
             }
         }, "DnsWorker").apply { isDaemon = true }
         dnsWorkerThread = thread
-        // 第二 worker：单个慢查询（DoH 竞速最长约 1.3s）不再阻塞后续域名解析，
+        // 第二 worker：单个慢查询（DoH 兜底最长约 1.3s）不再阻塞后续域名解析，
         // 冷启动批量解析场景下首屏延迟明显降低
         val thread2 = Thread({
             android.os.Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND)
             while (dnsWorkerActive && isRunning) {
                 try {
-                    val task = dnsTaskIn.poll(200, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    val task = dnsTaskIn.poll(
+                        DNS_WORKER_IDLE_POLL_MILLIS,
+                        java.util.concurrent.TimeUnit.MILLISECONDS
+                    )
                     if (task != null && task.generation == activeTunGeneration) {
-                        val result = processDnsTaskAsync(task)
-                        if (result != null) {
-                            dnsResultOut.offer(result)
-                        }
+                        processDnsTask(task)
                     }
                 } catch (_: InterruptedException) {
                     break
@@ -242,7 +245,9 @@ class AdBlockVpnService : VpnService() {
         val protectedQuestion: Boolean,
         val shouldUseActiveMitmRouting: Boolean,
         // 显式标记 sinkhole 拦截：上游失败时的 stale 兜底响应与广告拦截响应不再混淆
-        val blocked: Boolean = false
+        val blocked: Boolean = false,
+        // 命中学习引擎缓存时携带条目，用于统计口径与日志里的识别依据
+        val learnedHit: ScoredBlockCache.Entry? = null
     )
     private val blockedIpNetworks by lazy(LazyThreadSafetyMode.NONE) { loadBlockedIpNetworks() }
 
@@ -746,6 +751,12 @@ class AdBlockVpnService : VpnService() {
             HttpsMitmController.onVpnStarted(this@AdBlockVpnService)
             probeLocalProxyCoexistAsync()
             synchronized(dnsResponseCache) { dnsResponseCache.clear() }
+            // 规则/白名单变更后重建的 VPN 必须重新判定已在场的会话，
+            // 否则旧会话的 SNI / 明文 HTTP / TCP-DNS 判定结果会让新规则不生效
+            plainHttpCheckedFlows.clear()
+            tcpDnsCheckedFlows.clear()
+            sniReassemblyBuffers.clear()
+            sniResolvedFlows.clear()
             ScoredBlockCache.clear()
             runCatching { prewarmDnsAdSinkhole() }
             LogRepository.append(this@AdBlockVpnService, "VPN seamlessly reloaded")
@@ -894,8 +905,13 @@ class AdBlockVpnService : VpnService() {
     }
 
     private fun flushRuntimeCaches() {
+        // 会话判定缓存必须随规则/配置变更一起失效，否则旧“已放行/已判定”会话会漏拦
+        plainHttpCheckedFlows.clear()
+        tcpDnsCheckedFlows.clear()
+        sniReassemblyBuffers.clear()
+        sniResolvedFlows.clear()
         synchronized(dnsResponseCache) { dnsResponseCache.clear() }
-        synchronized(decisionLogCache) { decisionLogCache.clear() }
+        decisionLogCache.clear()
         synchronized(adIpTargetCache) { adIpTargetCache.clear() }
         synchronized(httpDecryptIpCache) { httpDecryptIpCache.clear() }
         synchronized(httpsDecryptIpCache) { httpsDecryptIpCache.clear() }
@@ -932,7 +948,7 @@ class AdBlockVpnService : VpnService() {
         appLabelCache.clear()
         vendorHintCache.clear()
         synchronized(dnsResponseCache) { dnsResponseCache.clear() }
-        synchronized(decisionLogCache) { decisionLogCache.clear() }
+        decisionLogCache.clear()
         synchronized(adIpTargetCache) { adIpTargetCache.clear() }
         synchronized(httpDecryptIpCache) { httpDecryptIpCache.clear() }
         synchronized(httpsDecryptIpCache) { httpsDecryptIpCache.clear() }
@@ -1438,6 +1454,10 @@ class AdBlockVpnService : VpnService() {
 
     private fun invalidateNetworkDependentCaches(reason: String) {
         invalidateDnsServerCache()
+        // 切换网络后旧的底层 Network 句柄与 DoH 熔断状态都已失效，
+        // 继续沿用会让 DNS 回退链路在新生效的网络上白白等待
+        DnsOverHttpsClient.invalidateNetworkCache()
+        dohCooldownUntil = 0L
         synchronized(adIpTargetCache) {
             adIpTargetCache.clear()
         }
@@ -1536,14 +1556,32 @@ class AdBlockVpnService : VpnService() {
         releasePacketWakelock()
     }
 
-    /** 独立 DNS 结果写出协程：不依赖后续数据包到达，10ms 周期 poll 并直接写 TUN */
+    /**
+     * 独立 DNS 结果写出协程：不依赖后续数据包到达（Android Q+ TUN 阻塞读，
+     * 主循环等包期间已就绪的应答无法写出）。
+     * 空闲时改为对结果队列做带超时的阻塞等待：旧实现固定 10ms 轮询，
+     * 待机状态下也要每秒唤醒 CPU 100 次，是后台发热与耗电的主要来源之一。
+     */
     private fun launchDnsResultDrainer(tunGeneration: Long): kotlinx.coroutines.Job {
         return scope.launch(Dispatchers.IO) {
             while (isActive && isRunning && tunGeneration == activeTunGeneration) {
-                val drained = drainDnsAsyncResultsToTun(tunGeneration)
-                if (!drained) {
-                    kotlinx.coroutines.delay(10L)
+                val waited = runCatching {
+                    dnsResultOut.poll(DNS_DRAINER_IDLE_WAIT_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS)
+                }.getOrNull()
+                if (waited == null) {
+                    // 无结果的等待周期里只需确认 TUN 输出仍然可用
+                    if (tunOutputStream == null && !isRunning) break
+                    continue
                 }
+                if (waited.generation != tunGeneration) continue
+                val output = tunOutputStream
+                if (output != null) {
+                    runCatching { handleDnsAsyncResult(waited, output) }
+                        .onFailure { t ->
+                            LogRepository.append(this@AdBlockVpnService, "DNS drainer write failed: ${t.message ?: t.javaClass.simpleName}")
+                        }
+                }
+                drainDnsAsyncResultsToTun(tunGeneration)
             }
         }
     }
@@ -1675,9 +1713,12 @@ class AdBlockVpnService : VpnService() {
 
     private fun handleBlockedPacketTargets(info: com.HanFeng.model.PacketInfo): Boolean {
         findBlockedIpNetwork(info.destinationAddress)?.let { return true }
-        val learnedIpHit = formatAddress(info.destinationAddress).let { ip ->
-            if (ip.isNotBlank()) ScoredBlockCache.isIpBlocked(ip) else null
-        }
+        // 学习缓存为空时跳过地址格式化与查表（该判断对每个过隧道的包都会执行）
+        val learnedIpHit = if (ScoredBlockCache.hasIpEntries()) {
+            formatAddress(info.destinationAddress).let { ip ->
+                if (ip.isNotBlank()) ScoredBlockCache.isIpBlocked(ip) else null
+            }
+        } else null
         if (learnedIpHit != null) {
             StatsRepository.recordBlockedHttp(
                 this,
@@ -1771,14 +1812,59 @@ class AdBlockVpnService : VpnService() {
             handleCriticalStartupDnsQuery(info, question, output)
             return true
         }
-        // Fast path: 响应缓存命中 → 主线程直接回复，无需阻塞
+        // Fast path: 响应缓存命中 → 主线程直接回复，无需阻塞。
+        // 命中后仍要做一次规则判定：规则是后加的（用户刚导入规则库、可疑域名补拦、学习引擎新增），
+        // 而 DNS 响应缓存按记录 TTL 存活（最长数小时）。旧实现直接回放缓存里的真实 IP，
+        // 表现为“规则明明加了还是出广告”。判定走 isBlocked 的 10 秒决策缓存，成本只有一次查表
         val cachedResponse = readCachedDnsResponse(question, info.payload)
         if (cachedResponse != null) {
-            output.write(PacketCodec.buildUdpResponse(info, cachedResponse))
             val cachedApp = readCachedAppName(buildCacheKeys(info))
                 ?: readCachedDomainApp(normalizeDomain(question.domain))
                 ?: "未知应用"
-            StatsRepository.recordRequest(this, classifyVendorCached(question.domain, cachedApp), cachedApp)
+            // 命中缓存也要重新判定规则，否则新加的规则在该域名的 TTL 内不生效，
+            // 表现为“规则明明加了还是出广告”
+            val cachedVendor = classifyVendorCached(question.domain, cachedApp)
+            // 白名单/敏感认证/受保护业务域名优先放行，学习引擎与后置规则都不能覆盖
+            val cacheHitExcepted = RuleRepository.isWhitelistedDomain(question.domain) ||
+                RuleRepository.isSensitiveAuthDomain(question.domain) ||
+                (isProtectedTrafficDomain(question.domain) &&
+                    !shouldTreatAsGeneralAdTraffic(question.domain, cachedVendor, cachedApp))
+            // 学习引擎命中的域名同样要在 DNS 层 sinkhole：否则 DNS 仍返回真实 IP，
+            // 广告 SDK 可以直接按 IP 建连，学习成果只剩 SNI 层生效
+            val cacheHitLearned = if (cacheHitExcepted) null else ScoredBlockCache.isDomainBlocked(question.domain)
+            val cacheHitBlocked = !cacheHitExcepted &&
+                (cacheHitLearned != null || RuleRepository.isBlocked(this, question.domain, question.qType, cachedApp))
+            if (cacheHitBlocked) {
+                val sinkhole = DnsMessageParser.buildSinkholeResponse(info.payload, question)
+                if (sinkhole != null) {
+                    output.write(PacketCodec.buildUdpResponse(info, sinkhole))
+                    val blockVendor = cacheHitLearned?.vendor?.takeIf { it.isNotBlank() } ?: cachedVendor
+                    StatsRepository.recordBlockedDns(
+                        this,
+                        blockVendor,
+                        cachedApp,
+                        512,
+                        source = if (cacheHitLearned != null) {
+                            StatsRepository.BlockSource.LEARNING_CANDIDATE
+                        } else {
+                            StatsRepository.BlockSource.DNS_RULE
+                        }
+                    )
+                    logDecisionOnce(
+                        key = "dns-cache-hit-block:${question.domain}:${question.qType}",
+                        message = if (cacheHitLearned != null) {
+                            "Blocked DNS by learned engine domain=${question.domain} qType=${question.qType}" +
+                                " app=$cachedApp vendor=$blockVendor reason=${cacheHitLearned.reason} score=${cacheHitLearned.score}"
+                        } else {
+                            "Blocked DNS from stale cache domain=${question.domain} qType=${question.qType} app=$cachedApp"
+                        },
+                        minIntervalMillis = 5_000L
+                    )
+                    return true
+                }
+            }
+            output.write(PacketCodec.buildUdpResponse(info, cachedResponse))
+            StatsRepository.recordRequest(this, cachedVendor, cachedApp)
             return true
         }
         // Slow path: 缓存未命中 → 派发到异步 Worker，主线程继续处理后续包
@@ -2111,6 +2197,11 @@ class AdBlockVpnService : VpnService() {
     }
 
     // DNS Async Worker — 在后台线程执行 DNS 查询，主线程仅提交任务和消费结果
+    private fun processDnsTask(task: DnsAsyncTask) {
+        val result = processDnsTaskAsync(task) ?: return
+        dnsResultOut.offer(result)
+    }
+
     private fun processDnsTaskAsync(task: DnsAsyncTask): DnsAsyncResult? {
         val info = task.info
         val question = task.question
@@ -2180,6 +2271,31 @@ class AdBlockVpnService : VpnService() {
             return null
         }
 
+        // 学习引擎识别出的域名在 DNS 层直接 sinkhole：
+        // 这些域名没有静态规则，靠 TLS 指纹/空 SNI/QUIC 降级/共享 IP 聚类等行为特征累积评分
+        if (!protectedQuestion) {
+            val learnedHit = ScoredBlockCache.isDomainBlocked(question.domain)
+            if (learnedHit != null) {
+                val sinkhole = DnsMessageParser.buildSinkholeResponse(task.payload, question)
+                if (sinkhole != null) {
+                    dnsResultOut.offer(DnsAsyncResult(
+                        generation = task.generation,
+                        info = info,
+                        question = question,
+                        domainContext = domainContext,
+                        upstreamResult = null,
+                        staleResponse = sinkhole,
+                        failureResponse = null,
+                        protectedQuestion = protectedQuestion,
+                        shouldUseActiveMitmRouting = false,
+                        blocked = true,
+                        learnedHit = learnedHit
+                    ))
+                }
+                return null
+            }
+        }
+
         val staleResp = readStaleCachedDnsResponse(question, task.payload)
         val failureResp = DnsMessageParser.buildServerFailureResponse(task.payload, question)
         val upstreamResult = queryUpstreamDns(task.payload)
@@ -2229,10 +2345,27 @@ class AdBlockVpnService : VpnService() {
         if (result.blocked && result.staleResponse != null && result.upstreamResult == null) {
             // Sinkhole — blocked response
             output.write(PacketCodec.buildUdpResponse(info, result.staleResponse))
-            StatsRepository.recordBlockedDns(this, vendor, appName, 512, source = StatsRepository.BlockSource.DNS_RULE)
+            val learnedHit = result.learnedHit
+            val blockVendor = learnedHit?.vendor?.takeIf { it.isNotBlank() } ?: vendor
+            StatsRepository.recordBlockedDns(
+                this,
+                blockVendor,
+                appName,
+                512,
+                source = if (learnedHit != null) {
+                    StatsRepository.BlockSource.LEARNING_CANDIDATE
+                } else {
+                    StatsRepository.BlockSource.DNS_RULE
+                }
+            )
             logDecisionOnce(
                 key = "dns-block-async:${question.domain}:${question.qType}:${appName}",
-                message = "Blocked DNS (async) domain=${question.domain} qType=${question.qType} app=$appName vendor=$vendor reason=${domainContext.reason}",
+                message = if (learnedHit != null) {
+                    "Blocked DNS by learned engine domain=${question.domain} qType=${question.qType}" +
+                        " app=$appName vendor=$blockVendor reason=${learnedHit.reason} score=${learnedHit.score}"
+                } else {
+                    "Blocked DNS (async) domain=${question.domain} qType=${question.qType} app=$appName vendor=$vendor reason=${domainContext.reason}"
+                },
                 minIntervalMillis = 5_000L
             )
             return
@@ -2619,6 +2752,29 @@ class AdBlockVpnService : VpnService() {
     // 按 flowKey 缓冲最多 8KB，凑齐后一次解析；会话结束/超限清理
     private val sniReassemblyBuffers = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
 
+    /**
+     * 已完成 SNI 判定的会话。TLS 建连后每条连接都会有大量加密记录包，
+     * 旧实现对这些包同样尝试解析 ClientHello，解析失败又把 payload 反复拷贝拼接进重组缓冲，
+     * 等于对全部 HTTPS 流量做无意义的复制与扫描（全接管/热点模式下是明显的 CPU 与 GC 压力来源）。
+     */
+    private val sniResolvedFlows = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    private fun markSniFlowResolved(flowKey: String) {
+        if (sniResolvedFlows.size > SNI_RESOLVED_FLOW_LIMIT) return
+        sniResolvedFlows[flowKey] = true
+    }
+
+    private fun pruneSniResolvedFlows() {
+        if (sniResolvedFlows.size <= SNI_RESOLVED_FLOW_LIMIT) return
+        val iterator = sniResolvedFlows.keys.iterator()
+        var removed = 0
+        while (iterator.hasNext() && removed < SNI_RESOLVED_FLOW_LIMIT / 2) {
+            iterator.next()
+            iterator.remove()
+            removed++
+        }
+    }
+
     private fun shouldBlockBySni(
         info: com.HanFeng.model.PacketInfo,
         output: FileOutputStream
@@ -2626,12 +2782,22 @@ class AdBlockVpnService : VpnService() {
         if (!isSniffableTlsHandshakePacket(info)) return false
         val payload = info.payload
         if (payload.isEmpty()) return false
-        // 只在有 SYN 或带 payload 的包中尝试解析 ClientHello
+        // 只在 SYN 或携带 payload 的包中尝试解析 ClientHello
         val isSyn = info.tcpFlags.hasTcpFlag(TCP_FLAG_SYN) && !info.tcpFlags.hasTcpFlag(TCP_FLAG_ACK)
         if (!isSyn && payload.size < 5) return false
 
         val flowKey = buildCacheKeys(info).flowKey
-        // 单包直接解析；失败后启用流缓冲累积后续分段再试
+        if (sniResolvedFlows.containsKey(flowKey)) return false
+        // TLS 记录首字节即可判定的类型（change_cipher_spec/alert/application_data）
+        // 一定不携带 ClientHello，直接判定整条流结束；未知首字节仍走有界重组，避免丢首包场景漏检
+        if (!isSyn) {
+            val recordType = payload[0].toInt() and 0xFF
+            if (recordType in 0x14..0x15 || recordType == 0x17) {
+                markSniFlowResolved(flowKey)
+                return false
+            }
+        }
+        // Parse single packet directly; on failure accumulate segments in buffer and retry
         var parsePayload: ByteArray = payload
         var clientHelloInfo = TlsClientHelloParser.extractClientHelloInfo(payload)
         if (clientHelloInfo == null) {
@@ -2645,6 +2811,7 @@ class AdBlockVpnService : VpnService() {
                     val merged = existing + payload
                     if (merged.size > 16384) {
                         sniReassemblyBuffers.remove(flowKey)
+                        markSniFlowResolved(flowKey)
                         return false
                     }
                     sniReassemblyBuffers[flowKey] = merged
@@ -2656,14 +2823,19 @@ class AdBlockVpnService : VpnService() {
         } else {
             // 解析成功，清理该流残留缓冲
             if (sniReassemblyBuffers.isNotEmpty()) sniReassemblyBuffers.remove(flowKey)
+            markSniFlowResolved(flowKey)
         }
         val sniHost = clientHelloInfo?.sniHost
         if (sniHost == null) {
-            // 缓冲已满仍解析不出（可能非 TLS 流）——放弃并清缓冲，避免普通流占内存
+            // 缓冲已满仍解析不出（可能非 TLS 流）——放弃并停止该流后续重试
             val bufferedSize = parsePayload.size
-            if (bufferedSize >= 16384) sniReassemblyBuffers.remove(flowKey)
+            if (bufferedSize >= 16384) {
+                sniReassemblyBuffers.remove(flowKey)
+                markSniFlowResolved(flowKey)
+            }
             return false
         }
+        markSniFlowResolved(flowKey)
         val appName = resolveAppName(sniHost, info)
         val destinationIp = formatAddress(info.destinationAddress)
 
@@ -8061,7 +8233,8 @@ class AdBlockVpnService : VpnService() {
         addresses: List<ByteArray>,
         signalType: MitmLearningEngine.SignalType
     ) {
-        if (!mitmLearningModeEnabled || !shouldUseActiveMitmRouting()) return
+        // 学习观察不再要求 MITM：无证书时 DNS/SNI 层仍可消费学习结果完成拦截
+        if (!mitmLearningModeEnabled) return
         addresses.forEach { address ->
             maybeApplyMitmLearningSignal(
                 MitmLearningEngine.Signal(
@@ -8075,8 +8248,11 @@ class AdBlockVpnService : VpnService() {
     }
 
     private fun maybeApplyMitmLearningSignal(signal: MitmLearningEngine.Signal) {
-        if (!mitmLearningModeEnabled || !shouldUseActiveMitmRouting()) return
+        if (!mitmLearningModeEnabled) return
+        // 候选评分与写入 ScoredBlockCache 与解密路由无关：候选域名随后会被 DNS/SNI 层拦截
         val candidate = MitmLearningEngine.observe(signal, enabled = true) ?: return
+        // 只有真正启用 MITM 解密路由时，才需要把候选 IP 纳入解密路由表
+        if (!shouldUseActiveMitmRouting()) return
         val address = runCatching { InetAddress.getByName(candidate.ip) }.getOrNull() ?: return
         val prefixLength = address.address.size * 8
         val expiresAt = System.currentTimeMillis() + candidate.ttlMillis
@@ -8184,6 +8360,11 @@ class AdBlockVpnService : VpnService() {
         prunePlainHttpFlowsIfNeeded()
         maybePruneTcpDnsFlows()
         pruneSniReassemblyBuffers()
+        pruneSniResolvedFlows()
+        // 学习引擎的 bucket / 共享 IP 表只在该方法里清理，
+        // 否则学习脱离 MITM 后观测面变大，会长期驻留历史数据
+        MitmLearningEngine.prune()
+        ScoredBlockCache.pruneIfNeeded()
         synchronized(adIpTargetCache) {
             pruneAdIpTargetsLocked()
         }
@@ -9225,10 +9406,11 @@ class AdBlockVpnService : VpnService() {
     }
 
     private fun queryUpstreamDns(payload: ByteArray): UpstreamDnsSupport.UpstreamDnsResult? {
-        val dohResult = queryUpstreamDnsOverHttps(payload)
-        if (dohResult != null) return dohResult
-
-        return UpstreamDnsSupport.queryUpstreamDns(
+        // 明文 UDP 上游优先：正常网络下通常几十毫秒返回。
+        // 旧实现每个未命中缓存的域名都先并发向 5 个 DoH 端点各建一条全新 TLS 连接，
+        // 握手开销直接放大 CPU 与耗电，且 DoH 不可达时要等满 ~1.3s 才回退 UDP，
+        // 用户体感就是“开拦截后网页变卡、手机发烫”。DoH 仅作为 UDP 全部失败后的兜底。
+        val plainResult = UpstreamDnsSupport.queryUpstreamDns(
             payload = payload,
             servers = resolveDnsServers(),
             acquireSocket = ::acquireDnsSocket,
@@ -9243,14 +9425,21 @@ class AdBlockVpnService : VpnService() {
                 )
             }
         )
+        if (plainResult != null) return plainResult
+        return queryUpstreamDnsOverHttps(payload)
     }
 
+    @Volatile private var dohCooldownUntil = 0L
+
     private fun queryUpstreamDnsOverHttps(payload: ByteArray): UpstreamDnsSupport.UpstreamDnsResult? {
+        val now = System.currentTimeMillis()
+        if (now < dohCooldownUntil) return null
         val latch = java.util.concurrent.CountDownLatch(1)
         val winner = java.util.concurrent.atomic.AtomicReference<DnsOverHttpsClient.DohResult?>(null)
         val perRequestTimeoutMs = 900
         var submitted = 0
-        for (dohUrl in DnsOverHttpsClient.DOH_SERVERS) {
+        // 只竞速前若干个端点：3 线程池排队 + 全员 TLS 握手是最重的功耗点
+        for (dohUrl in DnsOverHttpsClient.DOH_SERVERS.take(DOH_RACE_SERVER_COUNT)) {
             try {
                 dohRaceExecutor.submit {
                     if (latch.count > 0) {
@@ -9271,7 +9460,19 @@ class AdBlockVpnService : VpnService() {
         } catch (_: InterruptedException) {
             return null
         }
-        val result = winner.get() ?: return null
+        val result = winner.get()
+        if (result == null) {
+            // 连续失败说明当前网络到 DoH 端点不通（国内网络常见），
+            // 冷却期内直接跳过，避免每个域名都重复付一次握手与等待成本
+            dohCooldownUntil = System.currentTimeMillis() + DOH_COOLDOWN_MILLIS
+            logDecisionOnce(
+                key = "doh-cooldown",
+                message = "DoH upstream unavailable, cooling down for ${DOH_COOLDOWN_MILLIS / 1000}s",
+                minIntervalMillis = 120_000L
+            )
+            return null
+        }
+        dohCooldownUntil = 0L
         val serverHost = runCatching { java.net.URL(result.serverUrl).host }.getOrDefault(result.serverUrl)
         logDecisionOnce(
             key = "doh-success:${result.serverUrl}",
@@ -9411,22 +9612,44 @@ class AdBlockVpnService : VpnService() {
         minIntervalMillis: Long,
         message: () -> String
     ) {
-        val now = System.currentTimeMillis()
-        val shouldLog = synchronized(decisionLogCache) {
-            DecisionLogSupport.shouldLogLocked(
-                cache = decisionLogCache,
-                key = key,
-                now = now,
-                minIntervalMillis = minIntervalMillis
-            )
-        }
-        if (!shouldLog) return
+        if (!shouldLogDecision(key = key, minIntervalMillis = minIntervalMillis, now = System.currentTimeMillis())) return
         LogRepository.append(this, message())
     }
 
     /** 保留 String 重载用于已有调用点 */
     private fun logDecisionOnce(key: String, message: String, minIntervalMillis: Long) {
         logDecisionOnce(key = key, minIntervalMillis = minIntervalMillis) { message }
+    }
+
+    /**
+     * 无锁日志节流：同一 key 在 minIntervalMillis 内只放行一次。
+     * ConcurrentHashMap 读多写少且读不加锁，只在超限时做一次过期清理，
+     * 避免原先每线程都要抢同一把 LRU 锁。并发极端情况下可能多打一条日志，可接受。
+     */
+    private fun shouldLogDecision(key: String, minIntervalMillis: Long, now: Long): Boolean {
+        val previous = decisionLogCache[key]
+        if (previous != null && now - previous < minIntervalMillis) return false
+        maybePruneDecisionLogCache(now)
+        decisionLogCache[key] = now
+        return true
+    }
+
+    private fun maybePruneDecisionLogCache(now: Long) {
+        if (decisionLogCache.size <= VpnConstants.DECISION_LOG_CACHE_MAX_SIZE) return
+        val lastPruneAt = lastDecisionLogPruneAt
+        if (now - lastPruneAt < DECISION_LOG_PRUNE_INTERVAL_MILLIS) return
+        lastDecisionLogPruneAt = now
+        val iterator = decisionLogCache.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (now - entry.value > DECISION_LOG_ENTRY_TTL_MILLIS) {
+                iterator.remove()
+            }
+        }
+        // 全部条目都很新时（大量唯一 key 突发）直接清空重来，保证表不会无界增长
+        if (decisionLogCache.size > VpnConstants.DECISION_LOG_CACHE_MAX_SIZE * 2) {
+            decisionLogCache.clear()
+        }
     }
 
     private fun looksLikeAdIpTargetForQuicBlock(domain: String, appName: String, vendor: String): Boolean {
@@ -9767,6 +9990,9 @@ class AdBlockVpnService : VpnService() {
 
     private fun findAdIpTarget(info: com.HanFeng.model.PacketInfo): AdIpTarget? {
         maybePruneRouteCaches()
+        // 缓存为空是常态（多数网络没有已知广告 IP 目标），先做一次无锁快筛，
+        // 避免每个包都抢占同一把同步锁
+        if (adIpTargetCache.isEmpty()) return null
         val destinationIp = formatAddress(info.destinationAddress)
         if (destinationIp.isBlank()) return null
         return synchronized(adIpTargetCache) {
@@ -10647,10 +10873,17 @@ class AdBlockVpnService : VpnService() {
         private const val PASSTHROUGH_HEALTH_FAILURE_PERCENT = 45
         private const val MITM_FULL_CAPTURE_CIRCUIT_COOLDOWN_MILLIS = 180_000L
         private const val TUN_DEBUG_WINDOW_MILLIS = 1_000L
+        private const val DECISION_LOG_PRUNE_INTERVAL_MILLIS = 30_000L
+        private const val DECISION_LOG_ENTRY_TTL_MILLIS = 120_000L
+        private const val DNS_DRAINER_IDLE_WAIT_MILLIS = 1_000L
+        private const val DNS_WORKER_IDLE_POLL_MILLIS = 1_000L
+        private const val DOH_RACE_SERVER_COUNT = 3
+        private const val DOH_COOLDOWN_MILLIS = 120_000L
         private const val TUN_DEBUG_HIGH_RATE_PACKET_THRESHOLD = 1_000
         private const val TUN_STORM_PACKET_THRESHOLD_PER_SECOND = 5_000
         private const val TUN_STORM_COOLDOWN_MILLIS = 10_000L
         private const val TUN_STORM_BACKOFF_MILLIS = 20L
+        private const val SNI_RESOLVED_FLOW_LIMIT = 8_192
         private const val TUN_STORM_RELOAD_DELAY_MILLIS = 500L
         private const val ENABLE_ACTIVE_MITM_ROUTING = true
         private const val ENABLE_MITM_APP_FULL_CAPTURE = false

@@ -114,8 +114,9 @@ object FeatureSettingsRepository {
 
     fun isMitmLearningModeEnabled(context: Context): Boolean {
         cachedMitmLearningMode?.let { return it }
+        // 默认开启：智能识别只影响规则库未覆盖的域名，白名单与登录支付类域名在写入阶段就被排除
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_MITM_LEARNING_MODE, false)
+            .getBoolean(KEY_MITM_LEARNING_MODE, true)
             .also { cachedMitmLearningMode = it }
     }
 

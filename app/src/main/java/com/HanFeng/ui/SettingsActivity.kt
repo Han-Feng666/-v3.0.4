@@ -114,6 +114,7 @@ private lateinit var btnGameAntiMark: Button
     private lateinit var cbAutoInstallSystemCert: CheckBox
 
     private lateinit var switchHotspotBlock: Switch
+    private lateinit var switchAutoLearnAd: Switch
     private lateinit var switchIdleShutdown: Switch
     private lateinit var spinnerIdleShutdownInterval: Spinner
     private lateinit var textIdleShutdownDesc: TextView
@@ -213,6 +214,7 @@ btnGameAntiMark = findViewById(R.id.btnGameAntiMark)
         cbAutoInstallSystemCert = findViewById(R.id.cbAutoInstallSystemCert)
 
         switchHotspotBlock = findViewById(R.id.switchHotspotBlock)
+        switchAutoLearnAd = findViewById(R.id.switchAutoLearnAd)
         switchIdleShutdown = findViewById(R.id.switchIdleShutdown)
         spinnerIdleShutdownInterval = findViewById(R.id.spinnerIdleShutdownInterval)
         textIdleShutdownDesc = findViewById(R.id.textIdleShutdownDesc)
@@ -357,6 +359,12 @@ btnGameAntiMark = findViewById(R.id.btnGameAntiMark)
                 Intent(this, ThreadOptimizationActivity::class.java),
                 failureMessage = "打开线程优化失败"
             )
+        }
+
+        switchAutoLearnAd.isChecked = FeatureSettingsRepository.isMitmLearningModeEnabled(this)
+        switchAutoLearnAd.setOnCheckedChangeListener { _, isChecked ->
+            FeatureSettingsRepository.setMitmLearningModeEnabled(this, isChecked)
+            sendBroadcast(Intent(AdBlockVpnService.ACTION_RELOAD).setPackage(packageName))
         }
 
         val hotspotEnabled = FeatureSettingsRepository.isHotspotBlockEnabled(this)

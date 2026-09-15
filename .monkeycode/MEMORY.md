@@ -1114,3 +1114,37 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
   - 冻结语义 = disabled 或 suspended；解冻需同时 enable + unsuspend。
   - 沙盒 gradle 增量编译与 Android Studio 结果可能不一致（扩展符号解析差异），
     用户本地构建成功即以用户为准，勿反复重试沙盒编译。
+
+[VPN 热路径省电机与 DNS 判定约定]
+- Date: 2026-09-15
+- Context: Agent 排查"卡顿+发热"并同步修复"加规则后仍出广告"时发现
+- Category: 性能优化
+- Instructions:
+  - 上游 DNS 必须 UDP 优先，DoH 只在 UDP 失败后并发少量端点回退；DoH 全失败要进入熔断冷却，
+    禁止每次查询都新建 TLS 连接，否则会同时拖高功耗与解析延迟。
+  - DNS 结果消费与 worker 不得用 10ms 级别忙轮询，改用带超时的阻塞 poll（秒级）。
+  - 已建立 TLS 会话的后续记录（0x14/0x15/0x17 或已判定流）必须跳过 SNI 重组拷贝，
+    按 flowKey 标记已判定，集合超限整体清理。
+  - 高频写日志用 ConcurrentHashMap + TTL 限频，禁止跨线程抢锁的 accessOrder LRU。
+  - DNS 响应缓存命中后仍需再过一次 RuleRepository.isBlocked，
+    否则新加规则在 TTL 内不生效；规则/配置变更重建 VPN 时要清 SNI、明文 HTTP、TCP-DNS 流判定缓存。
+  - 网络切换回调（invalidateNetworkDependentCaches）需同时重置 DoH 底层 Network 缓存与熔断时间。
+
+[智能识别（学习引擎）接入拦截与决策页的约定]
+- Date: 2026-09-15
+- Context: Agent 实现"自动识别并拦截未知广告 + 拦截与放行页支持逐条入库"时发现
+- Category: 项目知识（自动识别链路）
+- Instructions:
+  - 学习信号观测必须与 MITM 路由解耦：observe 之前不得用 shouldUseActiveMitmRouting() 提前 return，
+    只有 httpsDecryptIpCache/路由重建才放在该判断之后，否则未装证书的设备完全不会自动识别。
+  - 学习结果必须在 DNS 层被消费（缓存命中快路径与 processDnsTaskAsync 慢路径都要查
+    ScoredBlockCache.isDomainBlocked 并 sinkhole），仅 SniInterceptor 查询会让学习域名继续拿到真实 IP；
+    查询前必须先过白名单/敏感认证/受保护流量例外，命中统计用 StatsRepository.BlockSource.LEARNING_CANDIDATE。
+  - 学习日志行必须保持 "Blocked ... domain=<domain>" 形状，否则「拦截与放行」页的正则解析不到条目。
+  - MitmLearningEngine.prune() 与 ScoredBlockCache.pruneIfNeeded() 必须挂在 maybePruneRouteCaches()
+    周期维护里，学习观测面扩大后否则共享 IP 集合无界增长。
+  - 开关 storage key 沿用 mitm_learning_mode（默认已改为 true），
+    唯一 UI 入口是设置页 switchAutoLearnAd；关闭开关只会停止新增学习条目，已入库规则不受影响。
+  - 用户手工放行某域名时必须同时 ScoredBlockCache.dropDomain()，避免学习缓存继续 sinkhole；
+    逐条/一键入库统一走 ScoredBlockCache.persistDomainToRules / persistLearnedDomainsToRules
+    （内部 RuleRepository.addRule(context, domain, RuleSource.IMPORTED)）。

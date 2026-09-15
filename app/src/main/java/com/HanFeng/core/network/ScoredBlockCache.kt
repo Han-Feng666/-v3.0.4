@@ -131,6 +131,9 @@ object ScoredBlockCache {
         return entry
     }
 
+    /** 热路径预筛：没有任何学习 IP 时跳过地址格式化与查表 */
+    fun hasIpEntries(): Boolean = ipBlocks.isNotEmpty()
+
     fun isIpBlocked(ip: String): Entry? {
         if (ip.isBlank()) return null
         val entry = ipBlocks[ip.trim()] ?: return null
@@ -155,6 +158,27 @@ object ScoredBlockCache {
     data class Snapshot(val domainCount: Int, val ipCount: Int)
 
     data class LearnedDomain(val domain: String, val vendor: String, val score: Int, val reason: String, val expiresAt: Long)
+
+    /** 学习缓存里是否存在该域名（未过期），供判定层与 UI 使用 */
+    fun isLearned(domain: String): Boolean = isDomainBlocked(domain) != null
+
+    /** 用户手工放行某域名时，同步撤销它的学习拦截，避免继续被 sinkhole */
+    fun dropDomain(domain: String) {
+        val normalized = domain.trim().lowercase()
+        if (normalized.isBlank()) return
+        domainBlocks.remove(normalized)
+        pruneIfNeeded()
+        save()
+    }
+
+    /** 单条学习域名入库；已存在规则时返回 false */
+    fun persistDomainToRules(context: android.content.Context, domain: String): Boolean {
+        val normalized = domain.trim().lowercase().takeIf { it.isNotBlank() } ?: return false
+        if (isDomainBlocked(normalized) == null) return false
+        val added = RuleRepository.addRule(context, normalized, RuleSource.IMPORTED) != null
+        if (added) save()
+        return added
+    }
 
     /** 导出全部学习命中域名（未过期），供一键入库为持久拦截规则 */
     fun exportLearnedDomains(): List<LearnedDomain> {

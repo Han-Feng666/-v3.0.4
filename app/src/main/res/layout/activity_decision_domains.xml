@@ -117,6 +117,21 @@
             android:text="被放行"
             android:textAllCaps="false"
             android:textColor="@color/hf_text_primary" />
+
+        <Space
+            android:layout_width="8dp"
+            android:layout_height="1dp" />
+
+        <Button
+            android:id="@+id/btnFilterLearned"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_button"
+            android:backgroundTint="@null"
+            android:text="智能识别"
+            android:textAllCaps="false"
+            android:textColor="@color/hf_text_primary" />
     </LinearLayout>
 
     <Button

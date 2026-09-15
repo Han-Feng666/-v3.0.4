@@ -8,7 +8,8 @@ object VpnConstants {
     const val ROUTE_CACHE_PRUNE_INTERVAL_MILLIS = 60_000L
 
     const val DNS_RESPONSE_CACHE_MAX_SIZE = 4096
-    const val DECISION_LOG_CACHE_MAX_SIZE = 256
+    // 256 条太少：唯一 key（域名+应用+qtype）一多就互相挤出，节流失效导致重复日志与磁盘写
+    const val DECISION_LOG_CACHE_MAX_SIZE = 2048
     const val AD_IP_TARGET_CACHE_MAX_SIZE = 1024
     const val HTTP_DECRYPT_IP_CACHE_MAX_SIZE = 512
     const val HTTPS_DECRYPT_IP_CACHE_MAX_SIZE = 512
