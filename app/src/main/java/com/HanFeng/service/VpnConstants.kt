@@ -10,6 +10,11 @@ object VpnConstants {
     const val DNS_RESPONSE_CACHE_MAX_SIZE = 4096
     // 256 条太少：唯一 key（域名+应用+qtype）一多就互相挤出，节流失效导致重复日志与磁盘写
     const val DECISION_LOG_CACHE_MAX_SIZE = 2048
+    // DNS 侧 IP 聚类学习：同一 IPv4 上出现多少个广告基础设施域名才算佐证
+    const val DNS_IP_CLUSTER_MIN_AD_HOSTS = 2
+    const val DNS_IP_CLUSTER_MAX_IPS_PER_QUERY = 4
+    // 与 RuleRepository.DEFAULT_VENDOR 一致：无厂商归属的域名才参与未知域名扇出统计
+    const val UNKNOWN_VENDOR_LABEL = "其它 (Other)"
     const val AD_IP_TARGET_CACHE_MAX_SIZE = 1024
     const val HTTP_DECRYPT_IP_CACHE_MAX_SIZE = 512
     const val HTTPS_DECRYPT_IP_CACHE_MAX_SIZE = 512

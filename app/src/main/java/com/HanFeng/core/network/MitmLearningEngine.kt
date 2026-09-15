@@ -73,11 +73,24 @@ object MitmLearningEngine {
     private val certPinningFailureRecords = ConcurrentHashMap<String, Int>()
     private val nxdomainDomains = ConcurrentHashMap.newKeySet<String>()
     private val sharedIpToDomains = ConcurrentHashMap<String, MutableSet<String>>()
+
+    /** ip -> (广告基础设施域名 -> 最近一次 DNS 解析时间)，只存名字命中广告 SDK 特征的域名 */
+    private val dnsIpAdHosts = ConcurrentHashMap<String, MutableMap<String, Long>>()
+
+    /** appName -> 当前窗口内解析过的无厂商归属域名 */
+    private val appDnsFanout = ConcurrentHashMap<String, FanoutWindow>()
     private const val WINDOW_MILLIS = 5 * 60_000L
     private const val EXTENDED_WINDOW_MILLIS = 10 * 60_000L
     private const val COOLDOWN_MILLIS = 10 * 60_000L
     private const val PINNING_FAILURE_BOOST_THRESHOLD = 2
     private const val BASE_THRESHOLD = 10
+    private const val DNS_IP_MAP_MAX = 4096
+    private const val DNS_IP_HOSTS_PER_IP_MAX = 16
+    private const val DNS_IP_HOST_TTL_MILLIS = 30 * 60_000L
+    private const val FANOUT_WINDOW_MILLIS = 5 * 60_000L
+    private const val FANOUT_DOMAIN_THRESHOLD = 10
+    private const val FANOUT_TRACKED_DOMAINS_MAX = 64
+    private const val FANOUT_APP_MAX = 256
 
     fun observe(signal: Signal, enabled: Boolean): Candidate? {
         if (!enabled) return null
@@ -226,6 +239,67 @@ object MitmLearningEngine {
         }
     }
 
+    /**
+     * 记录一次 DNS 解析结果中名字命中广告 SDK 特征的域名，用于 IP 聚类学习。
+     *
+     * MITM 关闭时 sharedIpToDomains 只能从 SNI 侧拿到少量数据，而广告域名大多在 DNS 层就被规则拦掉、
+     * 根本走不到 SNI；DNS 响应才是域名↔IP 的完整来源，所以单独维护这份小表。
+     */
+    fun recordDnsAdHost(domain: String, ip: String) {
+        val normalized = domain.trim().lowercase().takeIf { it.isNotBlank() } ?: return
+        val ipKey = ip.trim().takeIf { it.isNotBlank() && it.indexOf(':') < 0 } ?: return
+        dnsIpAdHosts[ipKey]?.let { hosts ->
+            if (hosts.containsKey(normalized)) {
+                hosts[normalized] = System.currentTimeMillis()
+                return
+            }
+        }
+        if (!RuleRepository.looksLikeAdSdkInfraDomain(normalized)) return
+        if (dnsIpAdHosts.size >= DNS_IP_MAP_MAX && !dnsIpAdHosts.containsKey(ipKey)) return
+        val hosts = dnsIpAdHosts.computeIfAbsent(ipKey) { ConcurrentHashMap() }
+        hosts[normalized] = System.currentTimeMillis()
+        if (hosts.size > DNS_IP_HOSTS_PER_IP_MAX) {
+            hosts.entries.sortedBy { it.value }
+                .take(hosts.size - DNS_IP_HOSTS_PER_IP_MAX)
+                .forEach { hosts.remove(it.key) }
+        }
+    }
+
+    /** 该 IP 上最近解析过的广告基础设施域名数量，用作未知域名的佐证信号 */
+    fun adHostsOnIp(ip: String): Int {
+        val hosts = dnsIpAdHosts[ip] ?: return 0
+        val deadline = System.currentTimeMillis() - DNS_IP_HOST_TTL_MILLIS
+        return hosts.count { it.value > deadline }
+    }
+
+    private data class FanoutWindow(var windowStartAt: Long = 0L, val domains: MutableSet<String> = HashSet())
+
+    /**
+     * 记录一次"无厂商归属"的解析，窗口内未知域名数达到阈值时返回 true（广告 SDK 的典型行为：
+     * 一次会话里解析出几十个互不相同的追踪/广告域名）。
+     */
+    fun noteUnknownDnsFanout(appName: String, domain: String): Boolean {
+        val app = appName.trim().takeIf { it.isNotBlank() } ?: return false
+        val normalized = domain.trim().lowercase().takeIf { it.isNotBlank() } ?: return false
+        val now = System.currentTimeMillis()
+        val window = appDnsFanout.compute(app) { _, current ->
+            if (current == null || now - current.windowStartAt > FANOUT_WINDOW_MILLIS) {
+                FanoutWindow(windowStartAt = now)
+            } else {
+                current
+            }
+        } ?: return false
+        synchronized(window) {
+            if (window.domains.size >= FANOUT_TRACKED_DOMAINS_MAX) {
+                // 超限重置窗口，宁可漏报也不让集合无界增长
+                window.domains.clear()
+                window.windowStartAt = now
+            }
+            window.domains.add(normalized)
+            return window.domains.size >= FANOUT_DOMAIN_THRESHOLD
+        }
+    }
+
     fun registerNxdomain(domain: String) {
         val normalized = domain.trim().lowercase().takeIf { it.isNotBlank() } ?: return
         nxdomainDomains.add(normalized)
@@ -275,6 +349,18 @@ object MitmLearningEngine {
         if (nxdomainDomains.size > 4096) nxdomainDomains.clear()
         val activeIps = buckets.values.map { it.ip }.toHashSet()
         sharedIpToDomains.entries.removeIf { it.key !in activeIps }
+        val dnsDeadline = now - DNS_IP_HOST_TTL_MILLIS
+        dnsIpAdHosts.entries.forEach { entry ->
+            entry.value.entries.removeIf { it.value <= dnsDeadline }
+        }
+        dnsIpAdHosts.entries.removeIf { it.value.isEmpty() }
+        appDnsFanout.entries.removeIf { now - it.value.windowStartAt > FANOUT_WINDOW_MILLIS * 2 }
+        if (appDnsFanout.size > FANOUT_APP_MAX) {
+            appDnsFanout.entries
+                .sortedBy { it.value.windowStartAt }
+                .take(appDnsFanout.size - FANOUT_APP_MAX)
+                .forEach { appDnsFanout.remove(it.key) }
+        }
     }
 
     private fun applySignal(bucket: Bucket, signal: Signal) {

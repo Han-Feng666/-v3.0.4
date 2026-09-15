@@ -2140,17 +2140,26 @@ class AdBlockVpnService : VpnService() {
         }
 
         // 先缓存 IP 和目标信息（无论是否拦截）
-        if (shouldUseActiveMitmRouting() && addresses.isNotEmpty() && !protectedQuestion) {
-            rememberQuicTargets(question, upstreamResponse, appName, vendor)
-            rememberHttpDecryptTargets(question, upstreamResponse, appName, vendor)
-            rememberHttpsDecryptTargets(question, upstreamResponse, appName, vendor)
-            rememberAdIpTargets(question, upstreamResponse, appName, vendor)
+        if (addresses.isNotEmpty() && !protectedQuestion) {
+            // 学习观测与 IP 聚类不依赖 MITM：DNS 响应本身就给出完整的域名↔IP 映射
             maybeApplyMitmLearningSignals(
                 appName = appName,
                 domain = question.domain,
                 addresses = addresses,
                 signalType = MitmLearningEngine.SignalType.DNS_UNKNOWN
             )
+            maybeApplyDnsBehaviorSignals(
+                appName = appName,
+                domain = question.domain,
+                vendor = vendor,
+                addresses = addresses
+            )
+            if (shouldUseActiveMitmRouting()) {
+                rememberQuicTargets(question, upstreamResponse, appName, vendor)
+                rememberHttpDecryptTargets(question, upstreamResponse, appName, vendor)
+                rememberHttpsDecryptTargets(question, upstreamResponse, appName, vendor)
+                rememberAdIpTargets(question, upstreamResponse, appName, vendor)
+            }
         }
         if (shouldUseActiveMitmRouting() && aliasTargets.isNotEmpty() && !protectedQuestion) {
             rememberHttpDecryptAliasTargets(question, aliasTargets, upstreamResponse, appName)
@@ -2398,17 +2407,25 @@ class AdBlockVpnService : VpnService() {
             }
         }
 
-        if (result.shouldUseActiveMitmRouting && addresses.isNotEmpty() && !protectedQuestion) {
-            rememberQuicTargets(question, upstreamResponse, appName, vendor)
-            rememberHttpDecryptTargets(question, upstreamResponse, appName, vendor)
-            rememberHttpsDecryptTargets(question, upstreamResponse, appName, vendor)
-            rememberAdIpTargets(question, upstreamResponse, appName, vendor)
+        if (addresses.isNotEmpty() && !protectedQuestion) {
             maybeApplyMitmLearningSignals(
                 appName = appName,
                 domain = question.domain,
                 addresses = addresses,
                 signalType = MitmLearningEngine.SignalType.DNS_UNKNOWN
             )
+            maybeApplyDnsBehaviorSignals(
+                appName = appName,
+                domain = question.domain,
+                vendor = vendor,
+                addresses = addresses
+            )
+            if (result.shouldUseActiveMitmRouting) {
+                rememberQuicTargets(question, upstreamResponse, appName, vendor)
+                rememberHttpDecryptTargets(question, upstreamResponse, appName, vendor)
+                rememberHttpsDecryptTargets(question, upstreamResponse, appName, vendor)
+                rememberAdIpTargets(question, upstreamResponse, appName, vendor)
+            }
         }
         if (result.shouldUseActiveMitmRouting && aliasTargets.isNotEmpty() && !protectedQuestion) {
             rememberHttpDecryptAliasTargets(question, aliasTargets, upstreamResponse, appName)
@@ -8225,6 +8242,50 @@ class AdBlockVpnService : VpnService() {
             )
         }
         saveIpTargetCachesIfNeeded()
+    }
+
+    /**
+     * DNS 侧行为学习：不依赖 MITM，只用解析结果本身给规则库未覆盖的域名补佐证信号。
+     *
+     * - IP 聚类：未知域名解析到已经承载多个广告 SDK 域名的 IPv4 时加分
+     * - 未知域名扇出：同一 App 在窗口内解析出大量无任何厂商归属的域名（广告 SDK 典型行为）时加分
+     * 单个信号最高 4 分，越不过阈值，必须与 dns-unknown、DGA、TLS 指纹等叠加才会进入学习拦截。
+     */
+    private fun maybeApplyDnsBehaviorSignals(
+        appName: String,
+        domain: String,
+        vendor: String,
+        addresses: List<ByteArray>
+    ) {
+        if (!mitmLearningModeEnabled) return
+        var clusterHit = false
+        var firstV4: String? = null
+        var inspected = 0
+        for (address in addresses) {
+            if (inspected >= VpnConstants.DNS_IP_CLUSTER_MAX_IPS_PER_QUERY) break
+            val ip = formatAddress(address)
+            if (ip.isBlank() || ip.indexOf(':') >= 0) continue
+            inspected++
+            if (firstV4 == null) firstV4 = ip
+            MitmLearningEngine.recordDnsAdHost(domain, ip)
+            if (MitmLearningEngine.adHostsOnIp(ip) >= VpnConstants.DNS_IP_CLUSTER_MIN_AD_HOSTS) {
+                clusterHit = true
+                break
+            }
+        }
+        // 只有完全没有厂商归属的域名才计入扇出统计，避免浏览器/大厂 App 误判
+        val fanoutHit = vendor == VpnConstants.UNKNOWN_VENDOR_LABEL &&
+            MitmLearningEngine.noteUnknownDnsFanout(appName, domain)
+        val ip = firstV4 ?: return
+        if (!clusterHit && !fanoutHit) return
+        maybeApplyMitmLearningSignal(
+            MitmLearningEngine.Signal(
+                appName = appName,
+                domain = domain,
+                ip = ip,
+                type = MitmLearningEngine.SignalType.AD_CONTENT_CLUSTER
+            )
+        )
     }
 
     private fun maybeApplyMitmLearningSignals(

@@ -1148,3 +1148,17 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
   - 用户手工放行某域名时必须同时 ScoredBlockCache.dropDomain()，避免学习缓存继续 sinkhole；
     逐条/一键入库统一走 ScoredBlockCache.persistDomainToRules / persistLearnedDomainsToRules
     （内部 RuleRepository.addRule(context, domain, RuleSource.IMPORTED)）。
+
+[DNS 侧行为学习信号（无 MITM 自动识别）约定]
+- Date: 2026-09-15
+- Context: Agent 补强"无证书也能自动识别广告"时确定
+- Category: 项目知识（自动识别链路）
+- Instructions:
+  - 规则命中的域名在建连前就 sinkhole 并 return，拿不到解析 IP；因此 IP↔广告域名映射只能来自
+    "通过 DNS 但未列入规则"的域名 + SNI 侧观测，别指望从被拦查询里取 IP。
+  - DNS 侧新增的两条佐证信号都在 maybeApplyDnsBehaviorSignals：IPv4 聚类（同 IP 上广告基础设施域名
+    ≥ DNS_IP_CLUSTER_MIN_AD_HOSTS）与无厂商归属域名扇出（窗口内 ≥10 个未知域名）；
+    两者都只是 AD_CONTENT_CLUSTER（权重 2、上限 4），必须与 dns-unknown/DGA/TLS 指纹叠加才够阈值 10。
+  - 扇出统计只统计 vendor == VpnConstants.UNKNOWN_VENDOR_LABEL 的域名，避免浏览器与大厂 App 误判；
+    窗口集合有上限（64 域名 / 256 App），超限按时间淘汰，新增结构必须挂进 MitmLearningEngine.prune()。
+  - IPv6 不参与 IP 聚类（前缀共享普遍，误判率高）。
