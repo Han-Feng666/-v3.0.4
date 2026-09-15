@@ -1162,3 +1162,15 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
   - 扇出统计只统计 vendor == VpnConstants.UNKNOWN_VENDOR_LABEL 的域名，避免浏览器与大厂 App 误判；
     窗口集合有上限（64 域名 / 256 App），超限按时间淘汰，新增结构必须挂进 MitmLearningEngine.prune()。
   - IPv6 不参与 IP 聚类（前缀共享普遍，误判率高）。
+
+[「拦截与放行」页实时刷新与日志解析约定]
+- Date: 2026-09-15
+- Context: Agent 修复"列表不实时刷新、条目内容看不懂"时确定
+- Category: 项目知识（决策页）
+- Instructions:
+  - LogRepository.getDomainDecisionEntries 是增量解析（decisionParseOffset 记录读取位置，只解析新增行，
+    末尾半行回退等下一轮）；页面每 2 秒调用它，禁止改回整文件重扫（日志上限 8MB，重扫会持续吃 CPU）。
+  - 规则库 overlay 纠正时：若反方向日志已存在就直接复用该条目，禁止刷新 timestamp、禁止重复回写
+    rule-sync 日志，否则条目每轮被顶到列表最前且日志刷屏。
+  - 行点击必须走"域名操作"面板（查看内容 / 切换为拦截放行 / 复制），内容面板要给出规则库现状、
+    厂商归属、命名特征、风险提示、智能识别依据与原始日志，用户据此判断该拦还是该放。

@@ -1,15 +1,21 @@
 package com.HanFeng.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.util.TypedValue
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.appcompat.app.AlertDialog
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
+import android.widget.ScrollView
+import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.widget.doAfterTextChanged
@@ -20,11 +26,13 @@ import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.HanFeng.data.FeatureSettingsRepository
 import com.HanFeng.data.LogRepository
+import com.HanFeng.data.RuleRepository
 import com.HanFeng.databinding.ActivityDecisionDomainsBinding
 import com.HanFeng.databinding.ItemDecisionDomainBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.HanFeng.core.network.NetworkKernel
@@ -41,6 +49,7 @@ class DecisionDomainsActivity : BaseActivity() {
     private var learnedOnly = false
     private var learnedMap: Map<String, ScoredBlockCache.Entry> = emptyMap()
     private var searchJob: Job? = null
+    private var refreshJob: Job? = null
     // SimpleDateFormat accessed only from main thread; no ThreadLocal needed
     private val dateFormat = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault())
 
@@ -64,7 +73,8 @@ class DecisionDomainsActivity : BaseActivity() {
             dateFormat = dateFormat,
             learnedLookup = { domain -> entryForLearned(domain) },
             onToggleRequest = { entry -> toggleDecision(entry) },
-            onPersistRequest = { domain -> persistLearnedDomain(domain) }
+            onPersistRequest = { domain -> persistLearnedDomain(domain) },
+            onInspectRequest = { entry -> showDomainActions(entry) }
         )
         binding.list.layoutManager = LinearLayoutManager(this)
         binding.list.adapter = adapter
@@ -158,7 +168,177 @@ class DecisionDomainsActivity : BaseActivity() {
 
     override fun onResume() {
         super.onResume()
-        loadEntries()
+        startAutoRefresh()
+    }
+
+    override fun onPause() {
+        refreshJob?.cancel()
+        refreshJob = null
+        super.onPause()
+    }
+
+    /**
+     * 实时刷新：日志写入约 0.5 秒落盘，页面可见时每 2 秒做一轮增量解析刷新列表；
+     * 离开页面即停止，避免后台空转耗电。
+     */
+    private fun startAutoRefresh() {
+        refreshJob?.cancel()
+        refreshJob = lifecycleScope.launch {
+            while (isActive) {
+                loadEntries()
+                delay(AUTO_REFRESH_INTERVAL_MILLIS)
+            }
+        }
+    }
+
+    /**
+     * 点击条目的操作面板：先看这个域名的内容，再决定是否切换拦截/放行。
+     */
+    private fun showDomainActions(entry: LogRepository.DomainDecisionEntry) {
+        val canToggle = entry.scope == LogRepository.DecisionScope.DOMAIN
+        val newAction = if (entry.type == LogRepository.DomainDecisionType.BLOCKED) "放行" else "拦截"
+        val summary = buildString {
+            append("标识：${entry.identifier}\n")
+            append("当前：${if (entry.type == LogRepository.DomainDecisionType.BLOCKED) "拦截" else "放行"}")
+            append("（${scopeLabelOf(entry.scope)}）\n")
+            append("归属应用：${entry.appName.ifBlank { "未知" }}\n")
+            append("最近判定：${dateFormat.format(Date(entry.timestamp))}")
+        }
+        StableDialog.builder(this)
+            .setTitle("域名操作")
+            .setMessage(summary)
+            .setNeutralButton("复制", null)
+            .setNegativeButton(if (canToggle) "切换为$newAction" else "无法切换", if (canToggle) { _, _ -> toggleDecision(entry) } else null)
+            .setPositiveButton("查看内容") { dialog, _ ->
+                dialog.dismiss()
+                showDomainDetail(entry, entryForLearned(entry.domain))
+            }
+            .showSafely(this, "decision-actions-dialog")
+            ?.let { dialog ->
+                // 复制按钮点击后不关闭弹窗，方便继续看内容
+                dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
+                    copyToClipboard(entry.identifier)
+                }
+            }
+    }
+
+    /**
+     * 域名内容详情：规则库现状、厂商归属、判定依据与原始日志，帮助用户判断该拦还是该放。
+     */
+    private fun showDomainDetail(
+        entry: LogRepository.DomainDecisionEntry,
+        learned: ScoredBlockCache.Entry?
+    ) {
+        lifecycleScope.launch {
+            val detail = withContext(Dispatchers.IO) { describeEntry(entry, learned) }
+            if (isFinishing || isDestroyed) return@launch
+            val scroll = ScrollView(this@DecisionDomainsActivity)
+            val textView = TextView(this@DecisionDomainsActivity).apply {
+                text = detail
+                setTextIsSelectable(true)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTextColor(ContextCompat.getColor(this@DecisionDomainsActivity, com.HanFeng.R.color.hf_text_primary))
+                val padding = 6.dp
+                setPadding(padding * 3, padding, padding * 3, padding)
+            }
+            scroll.addView(textView)
+            val canToggle = entry.scope == LogRepository.DecisionScope.DOMAIN
+            val newAction = if (entry.type == LogRepository.DomainDecisionType.BLOCKED) "放行" else "拦截"
+            StableDialog.builder(this@DecisionDomainsActivity)
+                .setTitle("域名内容")
+                .setView(scroll)
+                .setNeutralButton("复制", null)
+                .setNegativeButton(if (canToggle) "切换为$newAction" else "关闭", if (canToggle) { _, _ -> toggleDecision(entry) } else null)
+                .setPositiveButton("知道了", null)
+                .showSafely(this@DecisionDomainsActivity, "domain-detail-dialog")
+                ?.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
+                    copyToClipboard(entry.identifier)
+                }
+        }
+    }
+
+    private fun copyToClipboard(text: String) {
+        runCatching {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            clipboard?.setPrimaryClip(ClipData.newPlainText("domain", text))
+        }
+        Toast.makeText(this, "已复制 $text", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 汇总一个标识当前"是什么内容、为什么被拦/放、规则库现在怎么处理它" */
+    private fun describeEntry(
+        entry: LogRepository.DomainDecisionEntry,
+        learned: ScoredBlockCache.Entry?
+    ): String {
+        val appContext = applicationContext
+        val message = entry.message
+        val lines = mutableListOf<String>()
+        lines += "标识：${entry.identifier}"
+        lines += "当前：${if (entry.type == LogRepository.DomainDecisionType.BLOCKED) "拦截" else "放行"}（${scopeLabelOf(entry.scope)}）"
+        lines += "归属应用：${entry.appName.ifBlank { "未知" }}"
+        lines += "最近判定：${dateFormat.format(Date(entry.timestamp))}"
+        lines += "判定来源：${decisionSourceOf(message)}"
+        ReasonPattern.find(message)?.let { lines += "判定原因：${it.groupValues[1].trim()}" }
+        ScorePattern.find(message)?.let { lines += "置信度：${it.groupValues[1]}" }
+        QTypePattern.find(message)?.let { lines += "记录类型：${it.groupValues[1]}" }
+        if (entry.scope == LogRepository.DecisionScope.DOMAIN) {
+            val domain = entry.domain
+            val userBlocked = runCatching { domain in RuleRepository.getUserOwnedBlockedDomains(appContext) }.getOrDefault(false)
+            val excepted = runCatching { domain in RuleRepository.getExceptedDomains(appContext) }.getOrDefault(false)
+            val whitelisted = runCatching { RuleRepository.isWhitelistedDomain(domain) }.getOrDefault(false)
+            val matchedRule = runCatching { RuleRepository.hasMatchingRule(appContext, domain) }.getOrDefault(false)
+            lines += "规则库现状：" + when {
+                whitelisted || excepted -> "白名单/例外放行，规则库不会再拦这个域名"
+                userBlocked -> "你在「拦截与放行」里手工加入的拦截规则"
+                matchedRule -> "命中规则库（订阅或导入的规则）"
+                else -> "未命中任何规则，需要靠启发式或智能识别判断"
+            }
+            val vendor = runCatching { RuleRepository.classifyVendor(appContext, domain) }.getOrNull()
+            if (!vendor.isNullOrBlank()) {
+                lines += "厂商归属：" + if (vendor == "其它 (Other)") "无明显厂商归属" else vendor
+            }
+            val traits = buildList {
+                if (runCatching { RuleRepository.looksLikeAdSdkInfraDomain(domain) }.getOrDefault(false)) {
+                    add("广告 SDK 基础设施命名特征")
+                } else if (runCatching { RuleRepository.looksLikeAdDomain(domain) }.getOrDefault(false)) {
+                    add("广告域名命名特征")
+                }
+            }
+            if (traits.isNotEmpty()) lines += "命名特征：" + traits.joinToString("；")
+            val risks = buildList {
+                if (runCatching { RuleRepository.isSensitiveAuthDomain(domain) }.getOrDefault(false)) {
+                    add("登录/支付等敏感认证域名，拦截可能导致无法登录或支付失败")
+                }
+                if (runCatching { RuleRepository.isSocialCoreDomain(domain) }.getOrDefault(false)) {
+                    add("社交核心域名，拦截可能影响消息收发")
+                }
+                if (runCatching { RuleRepository.isMediaCoreDomain(domain) || RuleRepository.isBusinessCoreDomain(domain) || RuleRepository.isGameCoreDomain(domain) }.getOrDefault(false)) {
+                    add("媒体/业务/游戏核心域名，拦截可能影响正常内容加载")
+                }
+            }
+            if (risks.isNotEmpty()) lines += "风险提示：" + risks.joinToString("；") else {
+                lines += "风险提示：未发现登录支付等核心功能依赖，拦截风险较低"
+            }
+        }
+        if (learned != null) {
+            val minutes = ((learned.expiresAt - System.currentTimeMillis()) / 60_000L).coerceAtLeast(0)
+            lines += "智能识别：已命中，置信度 ${learned.score}，依据 ${learned.reason.ifBlank { "行为特征" }}，约 $minutes 分钟后失效"
+            if (learned.vendor.isNotBlank()) lines += "疑似厂商：${learned.vendor}"
+        } else {
+            lines += "智能识别：未命中学习引擎"
+        }
+        lines += "原始日志：${message.take(260)}"
+        return lines.joinToString("\n")
+    }
+
+    private fun decisionSourceOf(message: String): String = when {
+        "via rule-sync" in message -> "你在「拦截与放行」页手工切换"
+        "by learned engine" in message -> "智能识别引擎（行为特征学习）"
+        "by ad heuristic" in message -> "广告行为启发式判定"
+        "reason=cache-hit" in message -> "放行（DNS 缓存命中）"
+        "Blocked" in message -> "命中拦截规则或流量特征"
+        "Passed" in message -> "放行（未命中拦截规则）"
+        else -> "其它"
     }
 
     private fun toggleDecision(entry: LogRepository.DomainDecisionEntry) {
@@ -255,6 +435,12 @@ class DecisionDomainsActivity : BaseActivity() {
     }
 
     companion object {
+        // 实时刷新间隔：日志写入器约 500ms 落盘，2 秒足够跟手又不会空转
+        private const val AUTO_REFRESH_INTERVAL_MILLIS = 2_000L
+        private val ReasonPattern = Regex("reason=([^\n]+?)(?= app=| vendor=| qType=| score=| qtype=|$)")
+        private val ScorePattern = Regex("score=(-?\\d+)")
+        private val QTypePattern = Regex("qType=(\\S+)")
+
         fun createIntent(context: Context): Intent = Intent(context, DecisionDomainsActivity::class.java)
 
         private val DIFF = object : DiffUtil.ItemCallback<LogRepository.DomainDecisionEntry>() {
@@ -280,7 +466,8 @@ class DecisionDomainsActivity : BaseActivity() {
         private val dateFormat: SimpleDateFormat,
         private val learnedLookup: (String) -> ScoredBlockCache.Entry?,
         private val onToggleRequest: (LogRepository.DomainDecisionEntry) -> Unit,
-        private val onPersistRequest: (String) -> Unit
+        private val onPersistRequest: (String) -> Unit,
+        private val onInspectRequest: (LogRepository.DomainDecisionEntry) -> Unit
     ) : ListAdapter<LogRepository.DomainDecisionEntry, DecisionDomainAdapter.ViewHolder>(DIFF) {
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
             return ViewHolder(
@@ -288,7 +475,8 @@ class DecisionDomainsActivity : BaseActivity() {
                 dateFormat,
                 learnedLookup,
                 onToggleRequest,
-                onPersistRequest
+                onPersistRequest,
+                onInspectRequest
             )
         }
 
@@ -301,7 +489,8 @@ class DecisionDomainsActivity : BaseActivity() {
             private val dateFormat: SimpleDateFormat,
             private val learnedLookup: (String) -> ScoredBlockCache.Entry?,
             private val onToggleRequest: (LogRepository.DomainDecisionEntry) -> Unit,
-            private val onPersistRequest: (String) -> Unit
+            private val onPersistRequest: (String) -> Unit,
+            private val onInspectRequest: (LogRepository.DomainDecisionEntry) -> Unit
         ) : RecyclerView.ViewHolder(binding.root) {
             fun bind(item: LogRepository.DomainDecisionEntry) {
                 val isDomain = item.scope == LogRepository.DecisionScope.DOMAIN
@@ -347,6 +536,8 @@ class DecisionDomainsActivity : BaseActivity() {
                     binding.btnRuleAction.setOnClickListener(null)
                 }
                 if (isDomain) {
+                    // 点击整行：先看域名内容，再决定是否切换拦截/放行
+                    binding.root.setOnClickListener { onInspectRequest(item) }
                     // 仅域名类事件支持长按手工切换
                     binding.root.setOnLongClickListener {
                         val context = binding.root.context
@@ -367,6 +558,7 @@ class DecisionDomainsActivity : BaseActivity() {
                     }
                 } else {
                     // 非 DOMAIN 类拦截禁用长按，避免误触发无法 fallback 的切换路径
+                    binding.root.setOnClickListener { onInspectRequest(item) }
                     binding.root.setOnLongClickListener {
                         android.widget.Toast.makeText(
                             binding.root.context,
@@ -382,6 +574,7 @@ class DecisionDomainsActivity : BaseActivity() {
 
     override fun onDestroy() {
         searchJob?.cancel()
+        refreshJob?.cancel()
         super.onDestroy()
     }
 }

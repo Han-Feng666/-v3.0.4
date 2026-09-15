@@ -14,8 +14,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.util.Locale
 import java.util.regex.Pattern
 import java.util.concurrent.atomic.AtomicInteger
@@ -30,6 +32,8 @@ object LogRepository {
     private const val LOG_SNAPSHOT_MAX_BYTES = 512 * 1024
     private const val MAX_LOG_FILE_BYTES = 8L * 1024 * 1024
     private const val LOG_TRUNCATE_KEEP_BYTES = 2L * 1024 * 1024
+    // 「拦截与放行」增量解析保留的条目上限，超限按时间淘汰最旧
+    private const val DECISION_ENTRIES_MAX = 4000
     private val legacyLogExportNames = setOf("hanfeng-adblock-logs.zip")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var logChannel = Channel<String>(capacity = LOG_CHANNEL_CAPACITY)
@@ -39,8 +43,10 @@ object LogRepository {
     private val droppedLogCount = AtomicInteger(0)
     @Volatile private var currentLogSessionId: String? = null
     private val decisionEntriesCacheLock = Any()
-    @Volatile private var cachedDecisionEntries: List<DomainDecisionEntry>? = null
-    @Volatile private var cachedDecisionEntriesSignature = -1L
+    // 增量解析状态：只解析上次之后新追加的日志行，供「拦截与放行」页每 2 秒实时刷新
+    private val decisionEntriesByKey = LinkedHashMap<String, DomainDecisionEntry>()
+    private var decisionParseOffset = 0L
+    private var decisionPendingBytes = ByteArrayOutputStream()
     @Volatile private var lastWriterFlushAt = 0L
     @Volatile private var lastFileTruncateAt = 0L
     private const val WRITER_FLUSH_INTERVAL_MILLIS = 500L
@@ -217,31 +223,89 @@ object LogRepository {
         )
     }
 
+    /**
+     * 「拦截与放行」页数据源：增量解析日志 + 用规则库真相纠正显示。
+     *
+     * 增量：只解析上次读取位置之后追加的行，页面每 2 秒刷新时的成本与新增行数成正比，
+     * 而不是每次重扫最多 8MB 的日志文件。
+     */
     fun getDomainDecisionEntries(context: Context): List<DomainDecisionEntry> {
         val file = logFile(context)
-        if (!file.exists()) return emptyList()
-        val fileSignature = (file.lastModified() shl 32) xor file.length()
+        if (!file.exists()) {
+            synchronized(decisionEntriesCacheLock) {
+                decisionEntriesByKey.clear()
+                decisionParseOffset = 0L
+                decisionPendingBytes.reset()
+            }
+            return emptyList()
+        }
+        appendNewDecisionEntries(context, file)
+        return correctDecisionEntriesByRules(context)
+    }
+
+    private fun appendNewDecisionEntries(context: Context, file: File) {
         synchronized(decisionEntriesCacheLock) {
-            val cached = cachedDecisionEntries
-            if (cached != null && cachedDecisionEntriesSignature == fileSignature) {
-                return cached
+            val length = file.length()
+            if (decisionParseOffset > length) {
+                // 日志被截断/重写，整体重来
+                decisionEntriesByKey.clear()
+                decisionParseOffset = 0L
+                decisionPendingBytes.reset()
             }
-        }
-        val latestByKey = linkedMapOf<String, DomainDecisionEntry>()
-        try {
-            file.forEachLine { rawLine ->
-                val firstSpace = rawLine.indexOf(' ')
-                if (firstSpace <= 0) return@forEachLine
-                val timestamp = rawLine.substring(0, firstSpace).toLongOrNull() ?: return@forEachLine
-                val message = rawLine.substring(firstSpace + 1)
-                parseDomainDecision(timestamp, message)?.let { entry ->
-                    // 用 (type, scope, identifier) 作 key 去重，避免不同 scope 但相同字符串的条目相互覆盖
-                    latestByKey["${entry.type}:${entry.scope}:${entry.identifier}"] = entry
+            if (decisionParseOffset >= length) return
+            runCatching {
+                RandomAccessFile(file, "r").use { raf ->
+                    raf.seek(decisionParseOffset)
+                    val buffer = ByteArray(64 * 1024)
+                    var position = decisionParseOffset
+                    while (position < length) {
+                        val requested = minOf(buffer.size.toLong(), length - position).toInt()
+                        val read = raf.read(buffer, 0, requested)
+                        if (read <= 0) break
+                        position += read
+                        var index = 0
+                        while (index < read) {
+                            val byte = buffer[index]
+                            index++
+                            if (byte == '\n'.code.toByte()) {
+                                parseDecisionLineLocked(decisionPendingBytes.toByteArray())
+                                decisionPendingBytes.reset()
+                            } else if (byte != '\r'.code.toByte()) {
+                                decisionPendingBytes.write(byte.toInt())
+                            }
+                        }
+                    }
+                    // 末尾可能是尚未写完的一行，回退到最后一个换行符之后，下次再读
+                    decisionParseOffset = position - decisionPendingBytes.size()
                 }
+            }.onFailure {
+                append(context, "getDomainDecisionEntries parse error: ${it.message ?: it.javaClass.simpleName}")
             }
-        } catch (e: Exception) {
-            append(context, "getDomainDecisionEntries parse error: ${e.message ?: e.javaClass.simpleName}")
+            if (decisionEntriesByKey.size > DECISION_ENTRIES_MAX) {
+                val dropCount = decisionEntriesByKey.size - DECISION_ENTRIES_MAX
+                decisionEntriesByKey.entries.sortedBy { it.value.timestamp }
+                    .take(dropCount)
+                    .map { it.key }
+                    .forEach { decisionEntriesByKey.remove(it) }
+            }
         }
+    }
+
+    private fun parseDecisionLineLocked(rawBytes: ByteArray): Boolean {
+        if (rawBytes.isEmpty()) return false
+        val rawLine = String(rawBytes, Charsets.UTF_8)
+        val firstSpace = rawLine.indexOf(' ')
+        if (firstSpace <= 0) return false
+        val timestamp = rawLine.substring(0, firstSpace).toLongOrNull() ?: return false
+        val entry = parseDomainDecision(timestamp, rawLine.substring(firstSpace + 1)) ?: return false
+        // 用 (type, scope, identifier) 作 key 去重，避免不同 scope 但相同字符串的条目相互覆盖
+        decisionEntriesByKey["${entry.type}:${entry.scope}:${entry.identifier}"] = entry
+        return true
+    }
+
+    private fun correctDecisionEntriesByRules(context: Context): List<DomainDecisionEntry> {
+        val snapshot = synchronized(decisionEntriesCacheLock) { decisionEntriesByKey.values.toList() }
+        val snapshotKeys = snapshot.mapTo(linkedSetOf<String>()) { "${it.type}:${it.scope}:${it.identifier}" }
         // 用 RuleRepository 当前 exceptionRule 状态纠正显示：日志只反映历史决策，
         // 规则库才是真相。若状态不一致则按规则库改判并回写一条日志以便下次直接命中。
         // 仅 DOMAIN scope 才能被规则库 toggle，IP/CIDR/Port/EncryptedDNS/Learning 类别
@@ -250,43 +314,40 @@ object LogRepository {
         val userOwnedBlockedDomains = runCatching { RuleRepository.getUserOwnedBlockedDomains(context) }.getOrDefault(emptySet())
         val corrected = linkedMapOf<String, DomainDecisionEntry>()
         val seenKeys = linkedSetOf<String>()
-        // 先放 ALLOWED（用户主动放行的优先显示在上方更直观），再放 BLOCKED
-        latestByKey.values.forEach { entry ->
+        snapshot.forEach { entry ->
             val key = "${entry.type}:${entry.scope}:${entry.identifier}"
             if (key in seenKeys) return@forEach
-            // 仅 DOMAIN 类型做 rule overlay 纠正
             if (entry.scope != DecisionScope.DOMAIN) {
                 corrected[key] = entry
                 seenKeys += key
                 return@forEach
             }
-            val now = System.currentTimeMillis()
             val correctedType = when {
                 entry.domain in exceptionDomains -> DomainDecisionType.ALLOWED
                 entry.domain in userOwnedBlockedDomains -> DomainDecisionType.BLOCKED
                 else -> entry.type
             }
             if (correctedType != entry.type) {
+                val newKey = "${correctedType}:${entry.scope}:${entry.identifier}"
+                // 反方向的日志已经存在时直接用它，既不重复回写日志也不刷新时间戳，
+                // 否则每轮刷新都会把该条目顶到列表最前
+                if (newKey in snapshotKeys) {
+                    seenKeys += newKey
+                    return@forEach
+                }
                 append(context, if (correctedType == DomainDecisionType.ALLOWED) {
                     "Passed request domain=${entry.domain} via rule-sync app=user"
                 } else {
                     "Blocked request domain=${entry.domain} via rule-sync app=user"
                 })
-                val newKey = "${correctedType}:${entry.scope}:${entry.identifier}"
-                corrected[newKey] = entry.copy(timestamp = now, type = correctedType)
+                corrected[newKey] = entry.copy(type = correctedType)
                 seenKeys += newKey
             } else {
                 corrected[key] = entry
                 seenKeys += key
             }
         }
-        val result = corrected.values.sortedByDescending(DomainDecisionEntry::timestamp)
-        val newSignature = (file.lastModified() shl 32) xor file.length()
-        synchronized(decisionEntriesCacheLock) {
-            cachedDecisionEntries = result
-            cachedDecisionEntriesSignature = newSignature
-        }
-        return result
+        return corrected.values.sortedByDescending(DomainDecisionEntry::timestamp)
     }
 
     private fun parseDomainDecision(timestamp: Long, message: String): DomainDecisionEntry? {
