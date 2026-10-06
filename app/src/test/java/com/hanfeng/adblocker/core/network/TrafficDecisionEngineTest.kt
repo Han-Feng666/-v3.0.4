@@ -24,6 +24,36 @@ class TrafficDecisionEngineTest {
     }
 
     @Test
+    fun `global mitm forces quic fallback for ordinary apps with https target`() {
+        val decision = TrafficDecisionEngine.shouldBlockQuicFlow(
+            quicInput(
+                domain = "static.example-cdn.com",
+                appName = "普通应用",
+                hasHttpsTarget = true,
+                globalMitmFullCapture = true
+            )
+        )
+
+        assertTrue(decision.blocked)
+        assertEquals("global-mitm-force-tcp", decision.reason)
+    }
+
+    @Test
+    fun `bypass reason keeps quic passthrough under global mitm`() {
+        val decision = TrafficDecisionEngine.shouldBlockQuicFlow(
+            quicInput(
+                domain = "static.example-cdn.com",
+                appName = "普通应用",
+                hasHttpsTarget = true,
+                globalMitmFullCapture = true,
+                bypassReason = "app-bypass"
+            )
+        )
+
+        assertFalse(decision.blocked)
+    }
+
+    @Test
     fun `stable mitm keeps unknown quic for aggressive apps passthrough`() {
         val decision = TrafficDecisionEngine.shouldBlockQuicFlow(
             quicInput(
@@ -115,7 +145,8 @@ class TrafficDecisionEngineTest {
         domain: String?,
         appName: String,
         hasHttpsTarget: Boolean,
-        globalMitmFullCapture: Boolean
+        globalMitmFullCapture: Boolean,
+        bypassReason: String? = null
     ): TrafficDecisionEngine.QuicBlockInput {
         return TrafficDecisionEngine.QuicBlockInput(
             packet = PacketInfo(
@@ -133,7 +164,7 @@ class TrafficDecisionEngineTest {
             appName = appName,
             vendor = "其它 (Other)",
             matchedRule = null,
-            bypassReason = null,
+            bypassReason = bypassReason,
             httpDecryptEnabled = true,
             hasHttpsTarget = hasHttpsTarget,
             globalMitmFullCapture = globalMitmFullCapture

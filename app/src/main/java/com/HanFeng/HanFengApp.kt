@@ -54,6 +54,7 @@ class HanFengApp : Application() {
         writeStartupLog("Application.onCreate")
         installGlobalCrashHandler()
         writeStartupLog("CrashHandler installed")
+        scheduleStatsWarmup()
         registerForegroundStateTracker()
         writeStartupLog("ForegroundStateTracker installed")
         IdleShutdownController.init(this)
@@ -158,8 +159,21 @@ class HanFengApp : Application() {
                 // appendToFile + FileOutputStream(use=true) 比 appendText 更可控,appendText 内部走同样的流
                 traceFile.appendText(entry)
             }
-            // 预热 StatsRepository：在 VPN 主线程首个 packet 命中 recordBlocked* 之前
-            // 完成整段 SP read + 7 段 JSON 反序列化，避免在 vpn 主收发线程上冷启动阻塞
+        }
+    }
+
+    /**
+     * 预热 StatsRepository：在 VPN 主线程首个 packet 命中 recordBlocked* 之前
+     * 完成整段 SP read + 7 段 JSON 反序列化，避免在 vpn 主收发线程上冷启动阻塞。
+     *
+     * 只允许执行一次：writeStartupLog 在启动链路会被调用多次（Application / MainActivity 各里程碑），
+     * 若把预热挂在每条日志后面，单线程 HanFeng-bg 队列会排入多次同样的重 IO。
+     */
+    private val statsWarmupScheduled = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private fun scheduleStatsWarmup() {
+        if (!statsWarmupScheduled.compareAndSet(false, true)) return
+        backgroundExecutor.execute {
             runCatching { com.HanFeng.data.StatsRepository.warmup(this@HanFengApp) }
         }
     }

@@ -136,9 +136,10 @@ class KernelProcessHider {
     private fun hideViaPidNamespace(pid: Int, scriptPath: String): Boolean {
         return try {
             val result = runRootShell(
-                "command -v unshare > /dev/null 2>&1 || exit 1\n" +
-                "NEW_PID=\$(unshare --pid --fork --mount-proc sh -c \"exec sh $scriptPath\" & echo \$!)\n" +
-                "echo \"NS_PID=\$NEW_PID\""
+                "if command -v unshare > /dev/null 2>&1; then " +
+                    "NEW_PID=\$(unshare --pid --fork --mount-proc sh -c \"exec sh $scriptPath\" & echo \$!); " +
+                    "echo \"NS_PID=\$NEW_PID\"; " +
+                "else echo NS_FAIL; fi"
             )
             result.exitCode == 0 && result.output.contains("NS_PID=")
         } catch (e: Exception) {

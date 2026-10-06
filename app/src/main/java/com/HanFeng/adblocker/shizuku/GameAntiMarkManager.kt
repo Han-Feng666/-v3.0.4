@@ -70,7 +70,7 @@ object GameAntiMarkManager {
         val startResult = suSession.execute(
             "nohup sh '${GameAntiMarkRepository.WATCHER_SCRIPT}' > '${GameAntiMarkRepository.LOG_FILE}' 2>&1 &\n" +
                 "echo \$! > '${GameAntiMarkRepository.PID_FILE}'\n" +
-                "sleep 0.3 && cat '${GameAntiMarkRepository.PID_FILE}' && echo STARTED", 8
+                "sleep 1 && cat '${GameAntiMarkRepository.PID_FILE}' && echo STARTED", 8
         )
         val started = startResult.output.contains("STARTED")
         running.set(started)
@@ -98,7 +98,7 @@ object GameAntiMarkManager {
             "if [ -f '${GameAntiMarkRepository.PID_FILE}' ]; then " +
                 "OLD_PID=\$(cat '${GameAntiMarkRepository.PID_FILE}' 2>/dev/null); " +
                 "if [ -n \"\$OLD_PID\" ] && kill -0 \"\$OLD_PID\" 2>/dev/null; then " +
-                "kill \"\$OLD_PID\" 2>/dev/null; sleep 0.2; kill -9 \"\$OLD_PID\" 2>/dev/null; echo KILLED_ORPHAN; " +
+                "kill \"\$OLD_PID\" 2>/dev/null; sleep 1; kill -9 \"\$OLD_PID\" 2>/dev/null; echo KILLED_ORPHAN; " +
                 "else " +
                 "rm -f '${GameAntiMarkRepository.PID_FILE}'; echo STALE_PID; " +
                 "fi; " +
@@ -196,10 +196,9 @@ object GameAntiMarkManager {
                         val filePath = "$userDir/$fileName"
                         val oldSsaidResult = suSession.execute(
                             "FILE='$filePath'\n" +
-                                "[ -f \"\$FILE\" ] || exit 0\n" +
-                                "grep -a -oE '[a-f0-9]{16}|${targetPkg}' \"\$FILE\" 2>/dev/null " +
+                                "if [ ! -f \"\$FILE\" ]; then echo NONE; else grep -a -oE '[a-f0-9]{16}|${targetPkg}' \"\$FILE\" 2>/dev/null " +
                                 "| grep -B1 -A1 '${targetPkg}' " +
-                                "| grep -oE '[a-f0-9]{16}' | head -n 1", 5
+                                "| grep -oE '[a-f0-9]{16}' | head -n 1; fi", 5
                         ).output.trim()
                         if (oldSsaidResult.length == 16) {
                             suSession.execute("sed -i 's/$oldSsaidResult/$newSsaid/g' '$filePath'", 5)

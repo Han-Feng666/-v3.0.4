@@ -1113,7 +1113,20 @@ object RuleRepository {
         }
     }
     private val dnsBlockDecisionLock = Any()
-    private const val DECISION_TTL_MS = 10000L // 10 秒缓存
+    // 60 秒缓存：规则导入/保存（save/appendRulesToSnapshot）与 flushRuntimeCaches（clearDecisionCache）
+    // 都会主动清空，TTL 只兜底功能开关/学习引擎类变更。热身规则命中过的域名在 TTL 内
+    // 直接查表返回，省掉每次全链候选扫描 + 正则合并匹配的 CPU 开销（后台发热主源）
+    private const val DECISION_TTL_MS = 60000L
+
+    /**
+     * 主动清空 DNS 拦截决策缓存。功能开关/运行配置/学习引擎变更后调用，
+     * 保证旧"已放行/已拦截"决策立即失效，TTL 延长后规则与开关仍然即时生效
+     */
+    fun clearDecisionCache() {
+        synchronized(dnsBlockDecisionLock) {
+            dnsBlockDecisionCache.clear()
+        }
+    }
 
     private val prewarmLock = Any()
     private val snapshotFileLock = Any()

@@ -74,7 +74,11 @@ class RootHideActivity : BaseActivity() {
 
         viewPager.adapter = HidePagerAdapter(this)
         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
-            tab.text = if (position == 0) "隐藏内容" else "作用域"
+            tab.text = when (position) {
+                0 -> "隐藏内容"
+                1 -> "作用域"
+                else -> "应用隐藏"
+            }
         }.attach()
 
         btnApply.setOnClickListener { applyHiding() }
@@ -306,11 +310,15 @@ class RootHideActivity : BaseActivity() {
         activity: FragmentActivity
     ) : FragmentStateAdapter(activity) {
 
-        override fun getItemCount(): Int = 2
+        override fun getItemCount(): Int = 3
         override fun createFragment(position: Int): Fragment {
             // FragmentStateAdapter 标准范式：每次重建都返回新实例
             // 通过 fragmentManager 持有实例不会泄漏，且支持配置变更/进程恢复
-            return if (position == 0) RootHideModulesFragment() else RootHideScopeFragment()
+            return when (position) {
+                0 -> RootHideModulesFragment()
+                1 -> RootHideScopeFragment()
+                else -> AppHideFragment()
+            }
         }
     }
 

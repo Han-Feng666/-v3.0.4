@@ -520,6 +520,15 @@ class MainActivity : BaseActivity() {
         }
     }
 
+    fun openPeripheral() {
+        runCatching {
+            startActivity(Intent(this, PeripheralManagementActivity::class.java))
+        }.onFailure {
+            LogRepository.append(this, "Open peripheral failed: ${it.message ?: it.javaClass.simpleName}")
+            showShortToast("打开外设管理失败")
+        }
+    }
+
     fun requestShizukuAccess() {
         handleShizukuAccessRequest {
             refreshHomeStatus()

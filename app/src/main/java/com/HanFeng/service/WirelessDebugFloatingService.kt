@@ -27,7 +27,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.HanFeng.adblocker.shizuku.BuiltInShizukuStarter
-import com.HanFeng.adblocker.shizuku.WirelessDebugPairingHelper
+import moe.shizuku.manager.adb.AdbMdns
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -69,7 +69,7 @@ class WirelessDebugFloatingService : Service() {
     private var rootView: View? = null
     private var statusTv: TextView? = null
     private var activateBtn: Button? = null
-    private var pairingHelper: WirelessDebugPairingHelper? = null
+    private var pairingHelper: AdbMdns? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -341,18 +341,26 @@ class WirelessDebugFloatingService : Service() {
             updateStatus("无线调试需要 Android 11+")
             return
         }
-        pairingHelper?.stopDiscovery()
-        val helper = WirelessDebugPairingHelper(this)
-        pairingHelper = helper
-        helper.startDiscovery { host, port ->
-            scope.launch {
-                if (!running) return@launch
-                discoveredHost = host
-                discoveredPort = port
-                updateStatus("已发现配对端口: $host:$port\n点'配对并激活'开始")
-                activateBtn?.isEnabled = true
+        pairingHelper?.stop()
+        val adbMdns = AdbMdns(
+            this,
+            AdbMdns.TLS_PAIRING,
+            object : androidx.lifecycle.Observer<Int> {
+                override fun onChanged(value: Int) {
+                    if (value > 0) {
+                        scope.launch {
+                            if (!running) return@launch
+                            discoveredHost = "127.0.0.1"
+                            discoveredPort = value
+                            updateStatus("已发现配对端口: 127.0.0.1:$value\n点'配对并激活'开始")
+                            activateBtn?.isEnabled = true
+                        }
+                    }
+                }
             }
-        }
+        )
+        pairingHelper = adbMdns
+        adbMdns.start()
     }
 
     private fun updateStatus(text: String) {
@@ -372,9 +380,16 @@ class WirelessDebugFloatingService : Service() {
         btn.text = "配对中…"
         progressBar.visibility = View.VISIBLE
         scope.launch {
+            // 总超时保护: 配对链路(握手/发现端口/shell/binder)任一环节卡死时兜底,
+            // 保证 pairing 复位、按钮恢复可点, 杜绝"点了没反应"
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    BuiltInShizukuStarter.pairAndActivateViaWirelessDebug(pairCode, host, port)
+                    kotlinx.coroutines.withTimeoutOrNull(45_000L) {
+                        BuiltInShizukuStarter.pairAndActivateViaWirelessDebug(pairCode, host, port)
+                    } ?: BuiltInShizukuStarter.ActivationResult(
+                        false, "wireless",
+                        "配对超时(45s): 配对端口可能已失效。请重新打开开发者选项里的\"使用配对码配对设备\", 用新配对码和新端口重试"
+                    )
                 }.getOrDefault(
                     BuiltInShizukuStarter.ActivationResult(false, "wireless", "激活异常")
                 )
@@ -397,12 +412,16 @@ class WirelessDebugFloatingService : Service() {
             if (result.success) {
                 delay(2000)
                 cleanupAndStop()
+            } else {
+                // 端口失效是最高频失败原因, 立即重扫, 更新悬浮窗提示新端口
+                discoveredPort = null
+                startMdnsDiscovery()
             }
         }
     }
 
     private fun cleanupAndStop() {
-        pairingHelper?.stopDiscovery()
+        pairingHelper?.stop()
         pairingHelper = null
         rootView?.let { v ->
             try {

@@ -42,8 +42,11 @@ class AdbClient(private val host: String, private val port: Int, private val key
     private val outputStream get() = if (useTls) tlsOutputStream else plainOutputStream
 
     fun connect() {
-        socket = Socket(host, port)
+        // 连接与读取超时: adbd connect 端口失效时避免无限阻塞
+        socket = Socket()
         socket.tcpNoDelay = true
+        socket.soTimeout = 10_000
+        socket.connect(java.net.InetSocketAddress(host, port), 5_000)
         plainInputStream = DataInputStream(socket.getInputStream())
         plainOutputStream = DataOutputStream(socket.getOutputStream())
 
@@ -58,6 +61,7 @@ class AdbClient(private val host: String, private val port: Int, private val key
 
             val sslContext = key.sslContext
             tlsSocket = sslContext.socketFactory.createSocket(socket, host, port, true) as SSLSocket
+            tlsSocket.soTimeout = 10_000
             tlsSocket.startHandshake()
             Log.d(TAG, "Handshake succeeded.")
 

@@ -21,6 +21,21 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
 
+    <!-- 外设管理：蓝牙耳机与散热器 -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
+
     <!-- Fork server 用的 Shizuku 客户端权限认证。server 端 BinderSender.sendBinder 通过此权限识别客户端 -->
     <uses-permission android:name="com.HanFeng.permission.shizuku.API_V23" />
     <!-- 官方 SDK dev.rikka.shizuku:provider 旧版本兼容 (server 端同时识别官方包名) -->
@@ -71,6 +86,18 @@
 
         <activity
             android:name="com.HanFeng.ui.RootHideActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.SmartRecommenderActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.PerformanceHubActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.HanFeng.ui.PeripheralManagementActivity"
             android:exported="false" />
 
         <activity

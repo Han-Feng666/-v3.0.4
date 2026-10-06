@@ -85,10 +85,10 @@ class SettingsActivity : BaseActivity() {
     private lateinit var btnManageCustomTrackingHeaders: Button
     private lateinit var textCustomTrackingHeadersPreview: TextView
     private lateinit var btnShizukuAdControl: Button
+    private lateinit var btnShizukuPermission: Button
     private lateinit var btnAppFreeze: Button
 private lateinit var btnGameAntiMark: Button
-    private lateinit var btnPerformanceTuner: Button
-    private lateinit var btnAppOpt: Button
+    private lateinit var btnPerformanceHub: Button
     private lateinit var btnRewardDeveloper: Button
     private lateinit var btnExportCertificate: Button
     private lateinit var btnInstallSystemCert: Button
@@ -184,10 +184,10 @@ private lateinit var btnGameAntiMark: Button
         btnManageCustomTrackingHeaders = findViewById(R.id.btnManageCustomTrackingHeaders)
         textCustomTrackingHeadersPreview = findViewById(R.id.textCustomTrackingHeadersPreview)
         btnShizukuAdControl = findViewById(R.id.btnShizukuAdControl)
+        btnShizukuPermission = findViewById(R.id.btnShizukuPermission)
         btnAppFreeze = findViewById(R.id.btnAppFreeze)
 btnGameAntiMark = findViewById(R.id.btnGameAntiMark)
-        btnPerformanceTuner = findViewById(R.id.btnPerformanceTuner)
-        btnAppOpt = findViewById(R.id.btnAppOpt)
+        btnPerformanceHub = findViewById(R.id.btnPerformanceTuner)
         btnRewardDeveloper = findViewById(R.id.btnRewardDeveloper)
         btnExportCertificate = findViewById(R.id.btnExportCertificate)
         btnInstallSystemCert = findViewById(R.id.btnInstallSystemCert)
@@ -336,6 +336,12 @@ btnGameAntiMark = findViewById(R.id.btnGameAntiMark)
         btnShizukuAdControl.setOnClickListener {
             requestShizukuThen { openShizukuAdControlCatalog() }
         }
+        btnShizukuPermission.setOnClickListener {
+            launchActivitySafely(
+                Intent(this, ShizukuPermissionManageActivity::class.java),
+                failureMessage = "打开 Shizuku 权限管理失败"
+            )
+        }
         btnAppFreeze.setOnClickListener {
             launchActivitySafely(
                 AppFreezeActivity.createIntent(this),
@@ -348,16 +354,10 @@ btnGameAntiMark = findViewById(R.id.btnGameAntiMark)
                 failureMessage = "打开腾讯游戏防标记失败"
             )
         }
-        btnPerformanceTuner.setOnClickListener {
+        btnPerformanceHub.setOnClickListener {
             launchActivitySafely(
-                PerformanceTunerActivity.createIntent(this),
-                failureMessage = "打开性能调优失败"
-            )
-        }
-        btnAppOpt.setOnClickListener {
-            launchActivitySafely(
-                Intent(this, ThreadOptimizationActivity::class.java),
-                failureMessage = "打开线程优化失败"
+                Intent(this, PerformanceHubActivity::class.java),
+                failureMessage = "打开性能优化失败"
             )
         }
 
@@ -1640,20 +1640,30 @@ syncWeakNetDesc()
             if (isFinishing || isDestroyed) return@launch
             if (!dialog.isShowing) return@launch
             val lines = result.output.trim().lines()
-            // 不暴露 prop key 给用户 - 只显示 "SN：xxx" 一行
-            val snVal = lines.firstOrNull { it.startsWith("gsm.sn=") }
+            fun propVal(prefix: String): String? = lines.firstOrNull { it.startsWith(prefix) }
                 ?.substringAfter('=')?.trim()
-                ?.takeIf { it.isNotBlank() && it != "(空)" }
-                ?: lines.firstOrNull { it.startsWith("persist.sys.sn=") }
-                    ?.substringAfter('=')?.trim()
-                    ?.takeIf { it.isNotBlank() && it != "(空)" }
-                ?: lines.firstOrNull { it.startsWith("ril.sn=") }
-                    ?.substringAfter('=')?.trim()
-                    ?.takeIf { it.isNotBlank() && it != "(空)" }
-                ?: lines.firstOrNull()
-                    ?.substringAfter('=')?.trim()
-                    ?.takeIf { it.isNotBlank() && it != "(空)" }
-            tvCurrent.text = "当前 SN：\n${snVal ?: "(无法读取)"}"
+                ?.takeIf { it.isNotBlank() && it != "(空)" && !it.startsWith("(") }
+            // SN 只从 SN prop 组 + EFS 真值取；ro.serialno 系列是设备序列号，
+            // 混入 SN 候选会出现"读到的不是 SN"的误判，仅作辅助展示
+            val snVal = propVal("gsm.sn=")
+                ?: propVal("persist.sys.sn=")
+                ?: propVal("ril.sn=")
+                ?: propVal("persist.sys.sn2=")
+                ?: propVal("ro.boot.sn=")
+                ?: propVal("sys.sn=")
+                ?: propVal("EFS(sn)=")
+            val source = when {
+                snVal != null && lines.firstOrNull { it.startsWith("EFS(sn)=") }?.contains(snVal) == true &&
+                    (propVal("gsm.sn=") == null && propVal("persist.sys.sn=") == null && propVal("ril.sn=") == null) ->
+                    "（EFS 出厂真值）"
+                snVal != null -> "（SN prop）"
+                else -> ""
+            }
+            val serialVal = propVal("ro.serialno=")
+                ?: propVal("ro.boot.serialno=")
+                ?: propVal("persist.sys.serialno=")
+            val serialLine = if (serialVal != null) "\n设备序列号：$serialVal（与 SN 不同源）" else ""
+            tvCurrent.text = "当前 SN：\n${snVal ?: "(无法读取，SN prop 与 EFS 均无值)"}$source$serialLine"
             if (!snVal.isNullOrBlank()) {
                 etInput.setText(snVal)
                 etInput.setSelection(etInput.text.length)
@@ -1682,7 +1692,6 @@ syncWeakNetDesc()
             }
         }
     }
-
     // ==================== IMEI ====================
     private fun showModifyImeiDialog() {
         val container = LinearLayout(this).apply {
@@ -1807,6 +1816,10 @@ syncWeakNetDesc()
             val rilVal = lines.firstOrNull { l -> l.startsWith("RIL(slot0)=") }
                 ?.substringAfter('=')?.trim()
                 ?.takeIf { v -> v.isNotBlank() && v != "(空)" }
+            // EFS 真值: 行可能带 "(共N个候选)" 后缀, 提取 15 位数字
+            val efsVal = lines.firstOrNull { l -> l.startsWith("EFS(slot0)=") }
+                ?.substringAfter('=')?.trim()
+                ?.let { Regex("\\d{15}").find(it)?.value }
             val propVal = lines.firstOrNull { l -> l.startsWith("gsm.imei=") }
                 ?.substringAfter('=')?.trim()
                 ?.takeIf { v -> v.isNotBlank() && v != "(空)" }
@@ -1822,13 +1835,18 @@ syncWeakNetDesc()
                 ?: lines.firstOrNull { l -> l.startsWith("persist.sys.imei2=") }
                     ?.substringAfter('=')?.trim()
                     ?.takeIf { v -> v.isNotBlank() && v != "(空)" }
-            val displayVal = rilVal ?: propVal
+            val displayVal = rilVal ?: efsVal ?: propVal
+            val sourceTag = when {
+                rilVal != null -> "（RIL 真值）"
+                efsVal != null -> "（EFS 出厂真值）"
+                propVal != null -> "（prop 伪装值）"
+                else -> ""
+            }
             val readFailedNote = when {
                 !displayVal.isNullOrBlank() -> ""
                 result.output.isBlank() -> "\n(Root 会话无输出, 请确认已授权 Root)"
                 result.output.contains("su_permission_denied") -> "\n(Root 授权被拒绝)"
-                result.output.contains("tmpfs") || result.output.contains("unknown") -> "\n(RIL 接口无响应, 多为系统限制)"
-                else -> ""
+                else -> "\n(RIL 层被系统权限锁定 Android10+, EFS 分区提取与 prop 伪装层均无值)"
             }
             val diagSection = if (displayVal.isNullOrBlank()) {
                 val diagLines = lines.filter { line ->
@@ -1839,13 +1857,11 @@ syncWeakNetDesc()
                 }.take(8)
                 if (diagLines.isNotEmpty()) "\n--- 读取诊断 ---\n" + diagLines.joinToString("\n") else ""
             } else ""
-            tvCurrent.text = "当前 IMEI1：${displayVal ?: "(无法读取)"}$readFailedNote$diagSection\n" +
+            tvCurrent.text = "当前 IMEI1：${displayVal ?: "(无法读取)"}$sourceTag$readFailedNote$diagSection\n" +
                 "当前 IMEI2：${imei2Val ?: "(无)"}"
-            if (!propVal.isNullOrBlank()) {
-                etInput1.setText(propVal as CharSequence)
-                etInput1.setSelection(etInput1.text.length)
-            } else if (!rilVal.isNullOrBlank()) {
-                etInput1.setText(rilVal as CharSequence)
+            val prefill = rilVal ?: efsVal ?: propVal
+            if (!prefill.isNullOrBlank()) {
+                etInput1.setText(prefill as CharSequence)
                 etInput1.setSelection(etInput1.text.length)
             }
             if (!imei2Val.isNullOrBlank()) {
@@ -1965,6 +1981,10 @@ syncWeakNetDesc()
             val rilVal = lines.firstOrNull { l -> l.startsWith("RIL(slot0)=") }
                 ?.substringAfter('=')?.trim()
                 ?.takeIf { v -> v.isNotBlank() && v != "(空)" }
+            // EFS 候选: 行带 "(候选,共N个)" 后缀, 提取 14 hex
+            val efsVal = lines.firstOrNull { l -> l.startsWith("EFS(meid)=") }
+                ?.substringAfter('=')?.trim()
+                ?.let { Regex("(?i)[0-9A-F]{14}").find(it)?.value }
             val propVal = lines.firstOrNull { l -> l.startsWith("gsm.meid=") }
                 ?.substringAfter('=')?.trim()
                 ?.takeIf { v -> v.isNotBlank() && v != "(空)" }
@@ -1974,13 +1994,18 @@ syncWeakNetDesc()
                 ?: lines.firstOrNull { l -> l.startsWith("ril.meid=") }
                     ?.substringAfter('=')?.trim()
                     ?.takeIf { v -> v.isNotBlank() && v != "(空)" }
-            val displayVal = rilVal ?: propVal
+            val displayVal = rilVal ?: efsVal ?: propVal
+            val sourceTag = when {
+                rilVal != null -> "（RIL 真值）"
+                efsVal != null -> "（EFS 候选值）"
+                propVal != null -> "（prop 伪装值）"
+                else -> ""
+            }
             val readFailedNote = when {
                 !displayVal.isNullOrBlank() -> ""
                 result.output.isBlank() -> "\n(Root 会话无输出, 请确认已授权 Root)"
                 result.output.contains("su_permission_denied") -> "\n(Root 授权被拒绝)"
-                result.output.contains("tmpfs") || result.output.contains("unknown") -> "\n(RIL 接口无响应, 多为系统限制)"
-                else -> ""
+                else -> "\n(RIL 层被系统权限锁定 Android10+, EFS 提取与 prop 伪装层均无值; GSM 机型通常无 MEID)"
             }
             val diagSection = if (displayVal.isNullOrBlank()) {
                 val diagLines = lines.filter { line ->
@@ -1991,12 +2016,10 @@ syncWeakNetDesc()
                 }.take(8)
                 if (diagLines.isNotEmpty()) "\n--- 读取诊断 ---\n" + diagLines.joinToString("\n") else ""
             } else ""
-            tvCurrent.text = "当前 MEID：\n${displayVal ?: "(无法读取)"}$readFailedNote$diagSection"
-            if (!propVal.isNullOrBlank()) {
-                etInput.setText(propVal as CharSequence)
-                etInput.setSelection(etInput.text.length)
-            } else if (!rilVal.isNullOrBlank()) {
-                etInput.setText(rilVal as CharSequence)
+            tvCurrent.text = "当前 MEID：\n${displayVal ?: "(无法读取)"}$sourceTag$readFailedNote$diagSection"
+            val prefill = rilVal ?: efsVal ?: propVal
+            if (!prefill.isNullOrBlank()) {
+                etInput.setText(prefill as CharSequence)
                 etInput.setSelection(etInput.text.length)
             }
         }
@@ -2042,7 +2065,7 @@ syncWeakNetDesc()
         StableDialog.applyLiquidGlassWindow(loadingDialog)
 
         lifecycleScope.launch {
-            // 异步列包 — 优先用 RootScriptExecutor 的 pm list packages -3 拿干净列表
+            // 异步列包 — 用 pm list packages -3 拿干净列表
             val apps = withContext(Dispatchers.IO) {
                 val su = com.HanFeng.adblocker.shizuku.SuSession.getInstance()
                 val pm = packageManager

@@ -109,6 +109,85 @@ object SocDatabase {
             fmaxCap = "2500000", thermalGuard = "48000", hispdLoad = "88"),
         SocProfile("天玑 1000+", "mt6889", "MTK",
             fmaxCap = "2400000", thermalGuard = "47000", hispdLoad = "88"),
+
+        // ===== Snapdragon 6 系列 =====
+        SocProfile("骁龙 6 Gen 1", "sm6450", "QCOM",
+            fmaxCap = "2200000", thermalGuard = "47000", hispdLoad = "90"),
+        SocProfile("骁龙 695", "sm6375", "QCOM",
+            fmaxCap = "2100000", thermalGuard = "46000", hispdLoad = "90"),
+        SocProfile("骁龙 680", "sm6225", "QCOM",
+            fmaxCap = "2000000", thermalGuard = "46000", hispdLoad = "90"),
+        SocProfile("骁龙 662", "sm6115", "QCOM",
+            fmaxCap = "1800000", thermalGuard = "45000", hispdLoad = "90"),
+
+        // ===== Snapdragon 4 系列 =====
+        SocProfile("骁龙 4 Gen 2", "sm4450", "QCOM",
+            fmaxCap = "2000000", thermalGuard = "46000", hispdLoad = "90"),
+        SocProfile("骁龙 480", "sm4350", "QCOM",
+            fmaxCap = "1800000", thermalGuard = "45000", hispdLoad = "90"),
+
+        // ===== Dimensity 700/600/500 系列 =====
+        SocProfile("天玑 720", "mt6853", "MTK",
+            fmaxCap = "2000000", thermalGuard = "46000", hispdLoad = "90"),
+        SocProfile("天玑 700", "mt6853", "MTK",
+            fmaxCap = "2000000", thermalGuard = "46000", hispdLoad = "90"),
+        SocProfile("天玑 6020", "mt6769", "MTK",
+            fmaxCap = "2000000", thermalGuard = "46000", hispdLoad = "90"),
+        SocProfile("天玑 5080", "mt6833", "MTK",
+            fmaxCap = "2000000", thermalGuard = "46000", hispdLoad = "90"),
+
+        // ===== Exynos 系列 =====
+        SocProfile("Exynos 2400", "s5e9935", "EXYNOS",
+            fmaxCap = "2800000", thermalGuard = "50000", hispdLoad = "85"),
+        SocProfile("Exynos 2200", "s5e9830", "EXYNOS",
+            fmaxCap = "2600000", thermalGuard = "49000", hispdLoad = "88"),
+        SocProfile("Exynos 1380", "s5e9835", "EXYNOS",
+            fmaxCap = "2400000", thermalGuard = "48000", hispdLoad = "90"),
+        SocProfile("Exynos 1080", "s5e9810", "EXYNOS",
+            fmaxCap = "2400000", thermalGuard = "48000", hispdLoad = "90"),
+
+        // ===== Google Tensor 系列 =====
+        SocProfile("Tensor G3", "zuma", "GOOGLE",
+            fmaxCap = "2800000", thermalGuard = "50000", hispdLoad = "85"),
+        SocProfile("Tensor G2", "gs201", "GOOGLE",
+            fmaxCap = "2600000", thermalGuard = "49000", hispdLoad = "88"),
+        SocProfile("Tensor G1", "gs101", "GOOGLE",
+            fmaxCap = "2400000", thermalGuard = "48000", hispdLoad = "90"),
+
+        // ===== Unisoc 系列 =====
+        SocProfile("Unisoc T820", "t820", "UNISOC",
+            fmaxCap = "2200000", thermalGuard = "47000", hispdLoad = "90"),
+        SocProfile("Unisoc T760", "t760", "UNISOC",
+            fmaxCap = "2000000", thermalGuard = "46000", hispdLoad = "90"),
+        SocProfile("Unisoc T618", "t618", "UNISOC",
+            fmaxCap = "2000000", thermalGuard = "46000", hispdLoad = "90"),
+
+        // ===== Kirin 系列 =====
+        SocProfile("麒麟 9000", "kirin9000", "KIRIN",
+            fmaxCap = "2800000", thermalGuard = "50000", hispdLoad = "85"),
+        SocProfile("麒麟 990", "kirin990", "KIRIN",
+            fmaxCap = "2400000", thermalGuard = "48000", hispdLoad = "90"),
+        SocProfile("麒麟 820", "kirin820", "KIRIN",
+            fmaxCap = "2200000", thermalGuard = "47000", hispdLoad = "90"),
+
+        // ===== Helio 系列 =====
+        SocProfile("Helio G99", "mt6789", "MTK",
+            fmaxCap = "2200000", thermalGuard = "47000", hispdLoad = "90"),
+        SocProfile("Helio G96", "mt6781", "MTK",
+            fmaxCap = "2000000", thermalGuard = "46000", hispdLoad = "90"),
+        SocProfile("Helio P95", "mt6779", "MTK",
+            fmaxCap = "2000000", thermalGuard = "46000", hispdLoad = "90"),
+
+        // ===== 平板专用 profile =====
+        SocProfile("平板 - 骁龙 8 Gen 2", "kalama", "QCOM",
+            fmaxCap = "2600000", thermalGuard = "52000", hispdLoad = "80",
+            adaptive = "1", disableMigt = "0"),
+        SocProfile("平板 - 天玑 9000", "mt6983", "MTK",
+            fmaxCap = "2500000", thermalGuard = "51000", hispdLoad = "80",
+            adaptive = "1", disableMigt = "0"),
+        SocProfile("平板 - 骁龙 888", "lahaina", "QCOM",
+            fmaxCap = "2400000", thermalGuard = "50000", hispdLoad = "82",
+            adaptive = "1", disableMigt = "0"),
     )
 
     private val platformToProfile: Map<String, List<SocProfile>> by lazy {

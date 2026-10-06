@@ -46,7 +46,7 @@ class WebViewAdBlockerTest {
         assertTrue("Request blocker script should not be empty", script.isNotEmpty())
         assertTrue("Should contain fetch override", script.contains("window.fetch"))
         assertTrue("Should contain XHR override", script.contains("XMLHttpRequest"))
-        assertTrue("Should contain ad domains list", script.contains("adDomains"))
+        assertTrue("Should contain ad domains list", script.contains("domainBlockList"))
     }
     
     @Test

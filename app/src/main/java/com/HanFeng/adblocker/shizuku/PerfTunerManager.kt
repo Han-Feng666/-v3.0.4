@@ -177,9 +177,9 @@ object PerfTunerManager {
         if (appOptRunning()) {
             suSession.execute(
                 "if [ -f '${PerformanceTunerRepository.APPOPT_PID}' ]; then " +
-                    "kill \$(cat '${PerformanceTunerRepository.APPOPT_PID}') 2>/dev/null; sleep 0.3; " +
+                    "kill \$(cat '${PerformanceTunerRepository.APPOPT_PID}') 2>/dev/null; sleep 1; " +
                     "kill -9 \$(cat '${PerformanceTunerRepository.APPOPT_PID}') 2>/dev/null; fi; " +
-                    "killall -15 AppOpt 2>/dev/null; sleep 0.3; killall -9 AppOpt 2>/dev/null; echo STOPPED", 6
+                    "killall -15 AppOpt 2>/dev/null; sleep 1; killall -9 AppOpt 2>/dev/null; echo STOPPED", 8
             )
         }
         suSession.execute("rm -f '${PerformanceTunerRepository.APPOPT_PID}' 2>/dev/null", 3)
@@ -326,7 +326,7 @@ object PerfTunerManager {
         )
         suSession.execute(
             "nohup sh '${PerformanceTunerRepository.SCENE_DIR}/guard.sh' >/dev/null 2>&1 &\n" +
-                "sleep 0.5 && echo GUARD_STARTED", 5
+                "sleep 1 && echo GUARD_STARTED", 6
         )
         return true
     }
@@ -345,7 +345,7 @@ object PerfTunerManager {
 
     fun stopScene(context: Context): Boolean {
         if (!hasRoot()) return false
-        suSession.execute("pkill -f 'scene_daemon.sh' 2>/dev/null; sleep 0.3; pkill -KILL -f 'scene_daemon.sh' 2>/dev/null; echo STOPPED", 6)
+        suSession.execute("pkill -f 'scene_daemon.sh' 2>/dev/null; sleep 1; pkill -KILL -f 'scene_daemon.sh' 2>/dev/null; echo STOPPED", 8)
         PerformanceTunerRepository.setSceneEnabled(context, false)
         LogRepository.append(context, "[$TAG] scene stopped")
         return true

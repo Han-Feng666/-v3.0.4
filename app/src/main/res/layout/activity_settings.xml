@@ -875,6 +875,13 @@
                 android:text="推广治理" />
 
             <Button
+                android:id="@+id/btnShizukuPermission"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:text="Shizuku 权限管理" />
+
+            <Button
                 android:id="@+id/btnAppFreeze"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -932,7 +939,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="12dp"
-                android:text="模块隐藏" />
+                android:text="Root 隐藏" />
 
             <Button
                 android:id="@+id/btnInstallSystemCert"
@@ -1012,21 +1019,13 @@
                 android:layout_marginBottom="16dp"
                 android:text="腾讯游戏防设备标记" />
 
-            <!-- 性能调优（调度） -->
+            <!-- 性能优化（状态面板 + 调度/线程优化入口） -->
             <Button
                 android:id="@+id/btnPerformanceTuner"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="8dp"
-                android:text="性能调优（调度参数）" />
-
-            <!-- 线程优化（APP 绑定） -->
-            <Button
-                android:id="@+id/btnAppOpt"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
                 android:layout_marginBottom="16dp"
-                android:text="线程优化" />
+                android:text="性能优化" />
 
             <!-- 赞助 -->
             <Button

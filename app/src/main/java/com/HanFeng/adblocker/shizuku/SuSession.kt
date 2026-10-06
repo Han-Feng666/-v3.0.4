@@ -11,6 +11,8 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 class SuSession {
 
@@ -49,6 +51,23 @@ class SuSession {
     private val commandLog = CopyOnWriteArrayList<CommandLogEntry>()
     private val totalCommands = AtomicLong(0)
     private val totalFailures = AtomicLong(0)
+
+    // ==================== 持久化 root shell ====================
+    // 旧实现每条命令 spawn 一个 `su -c`，Root 管理器"仅一次性"授权时每条命令都重新弹授权框，
+    // 复合脚本还会重复经历 su 启动延迟，设备慢时默认 15s 超时被 destroyForcibly 半途截断。
+    // 重构为一个常驻 `su` 交互 shell（stdin 喂命令 + 标记协议回读），整个会话只弹一次授权。
+    private var shellProcess: Process? = null
+    private var shellStdin: BufferedWriter? = null
+    private val shellOutputQueue = LinkedBlockingQueue<String>()
+    private val shellReaderAlive = AtomicBoolean(false)
+    private val shellLock = ReentrantLock(true)
+    private val shellOpCounter = AtomicLong(0)
+
+    @Volatile
+    private var shellBroken = false
+
+    @Volatile
+    private var lastShellStartError: String = ""
 
     @Volatile
     var rootSolution: RootSolution = RootSolution.NOT_ROOTED
@@ -90,31 +109,164 @@ class SuSession {
     }
 
     fun open(timeoutSeconds: Long = FIRST_CALL_TIMEOUT_SEC): Boolean {
-        if (permissionGranted.get()) return true
+        if (permissionGranted.get() && isShellAlive()) return true
         // 不再因 permissionDenied 永久拒绝后续重试: 让用户每次操作都有机会重新授权
         permissionDenied.set(false)
         lastOpenDiagnostic = ""
+        closeShell()
 
         Log.d(TAG, "Requesting root permission (timeout=${timeoutSeconds}s)...")
-        val result = runRawInternal("echo SU_READY && id", timeoutSeconds)
+        val result = runThroughShellWithProbe("echo SU_READY && id", timeoutSeconds)
 
-        return if (result.contains("SU_READY") && (result.contains("uid=0") || result.contains("uid=0(root)"))) {
+        return if (result.output.contains("SU_READY") &&
+            (result.output.contains("uid=0") || result.output.contains("uid=0(root)"))
+        ) {
             permissionGranted.set(true)
+            permissionDenied.set(false)
             lastOpenDiagnostic = ""
-            rootSolution = RootSolution.NOT_ROOTED
-            rootVersion = ""
             Log.d(TAG, "Root permission granted")
             detectRootSolution()
+            // 新会话可能来自不同的 root 方案, 使 resetprop 缓存失效
+            com.HanFeng.adblocker.shizuku.DeviceIdModifier.invalidateResetpropCache()
             true
         } else {
+            closeShell()
             permissionDenied.set(true)
-            lastOpenDiagnostic = buildOpenDiagnostic(result)
+            lastOpenDiagnostic = buildOpenDiagnostic(result.output)
             if (lastOpenDiagnostic.startsWith("未找到 su")) {
                 rootSolution = RootSolution.NOT_ROOTED
                 rootVersion = ""
             }
-            Log.e(TAG, "Root permission denied/timed out. Output: [${result.take(200)}]")
+            Log.e(TAG, "Root permission denied/timed out. Output: [${result.output.take(200)}]")
             false
+        }
+    }
+
+    private fun isShellAlive(): Boolean {
+        val p = shellProcess ?: return false
+        return shellReaderAlive.get() && !shellBroken && p.isAlive
+    }
+
+    /**
+     * 在常驻 root shell 中执行命令。shell 未就绪时先拉起（此路径仅用于 open 探测）。
+     * 协议: echo START标记 → 命令本体 → echo "END标记 $?"，按标记回读输出与退出码。
+     */
+    private fun runThroughShellWithProbe(command: String, timeoutSeconds: Long): ShellResult {
+        return try {
+            shellLock.withLock {
+                if (!ensureShellProcessLocked()) {
+                    return ShellResult(-1, lastShellStartError.ifBlank { "su_unavailable" })
+                }
+                runCommandViaShellLocked(command, timeoutSeconds)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "persistent shell execute failed: ${e.message}")
+            closeShell()
+            ShellResult(-1, e.message ?: "exception")
+        }
+    }
+
+    /** 持有 shellLock 的前提下确保 su 进程已拉起（含 reader 线程） */
+    private fun ensureShellProcessLocked(): Boolean {
+        if (isShellAlive()) return true
+        closeShell()
+        return try {
+            val p = ProcessBuilder("su")
+                .redirectErrorStream(true)
+                .start()
+            shellProcess = p
+            shellStdin = p.outputStream.bufferedWriter()
+            shellOutputQueue.clear()
+            shellBroken = false
+            shellReaderAlive.set(true)
+            Thread {
+                try {
+                    p.inputStream.bufferedReader().use { reader ->
+                        var line: String?
+                        while (reader.readLine().also { line = it } != null) {
+                            line?.let { shellOutputQueue.put(it) }
+                        }
+                    }
+                } catch (_: Exception) {
+                } finally {
+                    shellReaderAlive.set(false)
+                }
+            }.apply { isDaemon = true }.start()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "open su shell failed: ${e.message}")
+            lastShellStartError = e.message ?: "exception"
+            closeShell()
+            false
+        }
+    }
+
+    /** 持有 shellLock 的前提下执行单条命令并等待 END 标记 */
+    private fun runCommandViaShellLocked(command: String, timeoutSeconds: Long): ShellResult {
+        val stdinWriter = shellStdin ?: return ShellResult(-1, "su_unavailable")
+        val op = shellOpCounter.incrementAndGet()
+        val nonce = "${op}_${System.nanoTime()}"
+        val startMarker = "__HF_CS_${nonce}__"
+        val endMarker = "__HF_CE_${nonce}__"
+
+        try {
+            // 丢弃上一条命令残留的输出行
+            shellOutputQueue.clear()
+            stdinWriter.write("echo $startMarker")
+            stdinWriter.newLine()
+            stdinWriter.write(command)
+            stdinWriter.newLine()
+            stdinWriter.write("echo \"$endMarker \$?\"")
+            stdinWriter.newLine()
+            stdinWriter.flush()
+        } catch (e: Exception) {
+            shellBroken = true
+            return ShellResult(-1, "su_broken: ${e.message}")
+        }
+
+        val deadline = System.currentTimeMillis() + timeoutSeconds * 1000
+        val collected = StringBuilder()
+        var sawStart = false
+        var exitCode = -1
+
+        while (System.currentTimeMillis() < deadline) {
+            if (!isShellAlive() && shellOutputQueue.isEmpty()) break
+            val line = try {
+                shellOutputQueue.poll(100, TimeUnit.MILLISECONDS)
+            } catch (_: InterruptedException) {
+                break
+            } ?: continue
+
+            if (!sawStart) {
+                if (line.contains(startMarker)) sawStart = true
+                continue
+            }
+            if (line.startsWith(endMarker)) {
+                exitCode = line.removePrefix(endMarker).trim().toIntOrNull() ?: -1
+                return ShellResult(exitCode, collected.toString())
+            }
+            if (collected.length < 4 * 1024 * 1024) {
+                if (collected.isNotEmpty()) collected.append("\n")
+                collected.append(line)
+            }
+        }
+
+        // 超时或 shell EOF：当前 shell 可能被坏命令卡死，整体作废重建（下次 execute 自动重开）
+        Log.w(TAG, "persistent shell command ${if (isShellAlive()) "timed out after ${timeoutSeconds}s" else "lost EOF"}")
+        shellBroken = true
+        return ShellResult(-1, collected.toString().ifBlank { "su_timed_out" })
+    }
+
+    private fun closeShell() {
+        shellLock.withLock {
+            shellBroken = true
+            try { shellStdin?.write("exit") ; shellStdin?.newLine() ; shellStdin?.flush() } catch (_: Exception) {}
+            try { shellStdin?.close() } catch (_: Exception) {}
+            try { shellProcess?.destroy() } catch (_: Exception) {}
+            shellStdin = null
+            shellProcess = null
+            shellOutputQueue.clear()
+            shellReaderAlive.set(false)
         }
     }
 
@@ -142,7 +294,7 @@ class SuSession {
         } catch (_: Exception) {}
 
         try {
-            if (runRawInternal("test -f /data/adb/ap/bin/apd", 3).contains("ap/bin/apd")) {
+            if (runRawInternal("test -f /data/adb/ap/bin/apd && echo APD_FOUND", 3).contains("APD_FOUND")) {
                 rootSolution = RootSolution.APATCH
                 rootVersion = "APatch"
                 Log.d(TAG, "Detected APatch")
@@ -182,7 +334,23 @@ class SuSession {
         }
 
         val startTime = System.currentTimeMillis()
-        val result = runRawWithExit(command, timeout)
+        // 会话已授权：优先走常驻 shell（免重复 spawn/授权）；shell 失效自动重建，重建失败再退回单次 spawn
+        val result = if (permissionGranted.get()) {
+            var r = runThroughShellWithProbe(command, timeout)
+            if (r.exitCode == -1 && (r.output.startsWith("su_broken") || r.output == "su_unavailable")) {
+                // shell 进程被系统回收等场景：重建一次再试
+                closeShell()
+                r = runThroughShellWithProbe(command, timeout)
+            }
+            if (r.output == "su_unavailable" || r.output.startsWith("su_unavailable")) {
+                // 设备可能已失去 root：回退单次 spawn（与旧实现一致）
+                runRawWithExit(command, timeout)
+            } else {
+                r
+            }
+        } else {
+            runRawWithExit(command, timeout)
+        }
         val duration = System.currentTimeMillis() - startTime
         logCommand(command, result, duration)
         return result
@@ -255,6 +423,7 @@ class SuSession {
     fun close() {
         permissionGranted.set(false)
         permissionDenied.set(false)
+        closeShell()
     }
 
     fun getCommandLog(): List<CommandLogEntry> = commandLog.toList()
@@ -487,11 +656,7 @@ class SuSession {
     }
 
     private fun runRawInternal(command: String, timeoutSeconds: Long): String {
-        return runRawWithExit(command, timeoutSeconds).output
-    }
-
-    private fun runRaw(command: String, timeoutSeconds: Long): String {
-        return runRawWithExit(command, timeoutSeconds).output
+        return runThroughShellWithProbe(command, timeoutSeconds).output
     }
 
     private fun runRawWithExit(command: String, timeoutSeconds: Long): ShellResult {

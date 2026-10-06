@@ -9,6 +9,7 @@ object RootHideRepository {
     private const val KEY_MODULE_KEYS = "root_hide_module_keys"
     private const val KEY_PROP_DISGUISE_ENABLED = "prop_disguise_enabled"
     private const val KEY_AUTO_WATCHER_ENABLED = "auto_watcher_enabled"
+    private const val KEY_HIDDEN_APPS = "root_hidden_apps"
 
     fun getScopePackages(context: Context): Set<String> {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -75,6 +76,31 @@ object RootHideRepository {
         val apps = WhitelistRepository.loadInstalledApps(context, prioritizeCoexist = false)
         val scopePackages = getScopePackages(context)
         return apps.map { it.copy(rootHideSelected = it.packageName in scopePackages) }
+    }
+
+    /** 需要被隐藏（对其它 App 不可见）的应用包名集合 */
+    fun getHiddenApps(context: Context): Set<String> {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getStringSet(KEY_HIDDEN_APPS, emptySet())
+            ?.toSet()
+            ?: emptySet()
+    }
+
+    fun setHiddenApps(context: Context, packages: Set<String>) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putStringSet(KEY_HIDDEN_APPS, packages.toSet())
+            .apply()
+    }
+
+    fun toggleHiddenApp(context: Context, packageName: String, hidden: Boolean) {
+        val set = getHiddenApps(context).toMutableSet()
+        if (hidden) set += packageName else set -= packageName
+        setHiddenApps(context, set)
+    }
+
+    fun clearHiddenApps(context: Context) {
+        setHiddenApps(context, emptySet())
     }
 
     /**

@@ -1,13 +1,10 @@
 package com.HanFeng.data
 
-import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.util.Log
 import rikka.shizuku.Shizuku
 
-private const val FLAG_ALLOWED = 1 shl 1
-private const val FLAG_DENIED = 1 shl 2
-private const val MASK_PERMISSION = FLAG_ALLOWED or FLAG_DENIED
+/** 授权 flags 位定义统一收口到 [ShizukuFlags]（与 fork 服务端 ConfigManager 一致）。 */
 
 /**
  * 使用官方 Shizuku 底层 binder API 管理应用授权。
@@ -49,47 +46,6 @@ object ShizukuAuthorizationRepository {
     }
 
     /**
-     * 使用本地 PackageManager 列举已安装应用，通过 Shizuku binder 查询授权状态。
-     */
-    fun listInstalledAppsForAuth(context: android.content.Context): List<AuthorizedApp> {
-        if (!selfAuthorized()) {
-            Log.w(TAG, "listInstalledAppsForAuth: 本应用未获得 Shizuku 自授权,跳过 binder 查询")
-            return emptyList()
-        }
-        return try {
-            val pm = context.packageManager
-            pm.getInstalledPackages(PackageManager.GET_PERMISSIONS).mapNotNull { pkgInfo ->
-                try {
-                    val appInfo = pkgInfo.applicationInfo ?: return@mapNotNull null
-                    val uid = appInfo.uid
-                    val pkgName = pkgInfo.packageName
-                    val flags = runCatching { Shizuku.getFlagsForUid(uid, MASK_PERMISSION) }.getOrDefault(0)
-                    val isAllowed = (flags and FLAG_ALLOWED) == FLAG_ALLOWED
-                    // 同时检查 manifest 是否声明了客户端 permission,用作 UI 区分 "可授权" 与 "声明了客户端权限"
-                    val declaredClientPerm = isClientPermissionDeclared(pkgInfo)
-
-                    AuthorizedApp(
-                        uid = uid,
-                        packageName = pkgName,
-                        label = pkgName,
-                        icon = null,
-                        isAllowed = isAllowed,
-                        isDenied = !isAllowed,
-                        isSystemApp = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
-                        declaresShizukuClientPermission = declaredClientPerm
-                    )
-                } catch (e: Exception) {
-                    Log.w(TAG, "load app info failed: ${e.message}")
-                    null
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "listInstalledAppsForAuth failed: ${e.message}", e)
-            emptyList()
-        }
-    }
-
-    /**
      * 给指定 UID 授予 Shizuku 权限。
      * 使用 Shizuku.updateFlagsForUid 直接操作 server 端授权表，
      * 不依赖外部 AuthorizationManager。
@@ -102,11 +58,11 @@ object ShizukuAuthorizationRepository {
         return try {
             // updateFlagsForUid 在 server 端是同步调用: 一旦返回, 内存表 + 磁盘 shizuku.json
             // (configManager.update) 都已写入完成。不需要再 sleep 等异步持久化。
-            Shizuku.updateFlagsForUid(uid, MASK_PERMISSION, FLAG_ALLOWED)
+            Shizuku.updateFlagsForUid(uid, ShizukuFlags.MASK_PERMISSION, ShizukuFlags.FLAG_ALLOWED)
             // 紧接其后做 verify —— 此时 server.shouldRespondToBindApplication 已经把
             // 该 uid 的所有 clientRecord.allowed 标为 true。flags 持久化也已完成。
-            val flags = runCatching { Shizuku.getFlagsForUid(uid, MASK_PERMISSION) }.getOrDefault(0)
-            val verified = (flags and FLAG_ALLOWED) == FLAG_ALLOWED
+            val flags = runCatching { Shizuku.getFlagsForUid(uid, ShizukuFlags.MASK_PERMISSION) }.getOrDefault(0)
+            val verified = ShizukuFlags.isAllowed(flags)
             Log.i(TAG, "grantAuthorization $packageName uid=$uid flags=$flags verified=$verified")
             verified
         } catch (e: Exception) {
@@ -115,15 +71,21 @@ object ShizukuAuthorizationRepository {
         }
     }
 
+    /**
+     * 撤销指定 UID 的 Shizuku 授权，与官方 Shizuku Manager 的 revoke 语义一致：
+     * 写入 FLAG_DENIED（而非仅清 0）—— server 端会立即将该 uid 全部 clientRecord 标为
+     * 不可用、forceStop 其持有进程、revokeRuntimePermission，并把"已拒绝"持久化到
+     * shizuku.json；该应用之后发起的权限请求会被直接拒绝，需在本页重新开启授权。
+     */
     fun revokeAuthorization(packageName: String, uid: Int): Boolean {
         if (!selfAuthorized()) {
             Log.w(TAG, "revokeAuthorization: 本应用未自我授权,无法执行取消授权操作")
             return false
         }
         return try {
-            Shizuku.updateFlagsForUid(uid, MASK_PERMISSION, 0)
-            val flags = runCatching { Shizuku.getFlagsForUid(uid, MASK_PERMISSION) }.getOrDefault(0)
-            val verified = (flags and FLAG_ALLOWED) == 0
+            Shizuku.updateFlagsForUid(uid, ShizukuFlags.MASK_PERMISSION, ShizukuFlags.FLAG_DENIED)
+            val flags = runCatching { Shizuku.getFlagsForUid(uid, ShizukuFlags.MASK_PERMISSION) }.getOrDefault(-1)
+            val verified = flags >= 0 && ShizukuFlags.isDenied(flags) && !ShizukuFlags.isAllowed(flags)
             Log.i(TAG, "revokeAuthorization $packageName uid=$uid flags=$flags verified=$verified")
             verified
         } catch (e: Exception) {
@@ -134,8 +96,8 @@ object ShizukuAuthorizationRepository {
 
     fun isAuthorized(uid: Int): Boolean {
         if (!selfAuthorized()) return false
-        val flags = runCatching { Shizuku.getFlagsForUid(uid, MASK_PERMISSION) }.getOrDefault(0)
-        return (flags and FLAG_ALLOWED) == FLAG_ALLOWED
+        val flags = runCatching { Shizuku.getFlagsForUid(uid, ShizukuFlags.MASK_PERMISSION) }.getOrDefault(0)
+        return ShizukuFlags.isAllowed(flags)
     }
 
     /**
@@ -154,15 +116,3 @@ object ShizukuAuthorizationRepository {
         return false
     }
 }
-
-data class AuthorizedApp(
-    val uid: Int,
-    val packageName: String,
-    val label: String,
-    val icon: android.graphics.drawable.Drawable?,
-    val isAllowed: Boolean,
-    val isDenied: Boolean,
-    val isSystemApp: Boolean,
-    /** 该 app manifest 是否声明任一 Shizuku 客户端 permission。未声明的 app 授权开关无效。 */
-    val declaresShizukuClientPermission: Boolean = false
-)

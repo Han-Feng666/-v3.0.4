@@ -1,7 +1,10 @@
 package com.HanFeng.adblocker.shizuku
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
+import androidx.annotation.RequiresApi
+import androidx.lifecycle.Observer
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -9,6 +12,7 @@ import java.util.concurrent.atomic.AtomicReference
 import moe.shizuku.manager.adb.AdbClient
 import moe.shizuku.manager.adb.AdbKey
 import moe.shizuku.manager.adb.AdbPairingClient
+import moe.shizuku.manager.adb.AdbMdns
 import moe.shizuku.manager.adb.PreferenceAdbKeyStore
 
 internal class WirelessDebugPairer(private val context: Context) {
@@ -48,10 +52,8 @@ internal class WirelessDebugPairer(private val context: Context) {
             return BuiltInShizukuStarter.ActivationResult(false, "wireless", "ADB 配对失败: ${t.message}")
         }
 
-        // 3. mDNS 发现 connect 端口, 最长 5 秒
-        val helper = WirelessDebugPairingHelper(context)
-        val connectPort = discoverConnectPortSynchronous(helper, 5000L)
-        helper.stopDiscovery()
+        // 3. 用官方 AdbMdns 发现 connect 端口, 最长 5 秒
+        val connectPort = discoverConnectPortSynchronous(context, 5000L)
         if (connectPort == null) {
             return BuiltInShizukuStarter.ActivationResult(
                 false, "wireless",
@@ -98,23 +100,26 @@ internal class WirelessDebugPairer(private val context: Context) {
     }
 
     private fun discoverConnectPortSynchronous(
-        helper: WirelessDebugPairingHelper,
+        context: Context,
         timeoutMs: Long
     ): Int? {
         val latch = CountDownLatch(1)
         val portRef = AtomicReference<Int?>(null)
-        helper.startConnectDiscovery({ port ->
-            if (port != null) {
+        val adbMdns = AdbMdns(context, AdbMdns.TLS_CONNECT, Observer { port ->
+            if (port > 0) {
                 portRef.set(port)
                 latch.countDown()
             } else {
                 latch.countDown()
             }
-        }, timeoutMs + 1000L)
+        })
+        adbMdns.start()
         try {
             latch.await(timeoutMs, TimeUnit.MILLISECONDS)
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
+        } finally {
+            adbMdns.stop()
         }
         return portRef.get()
     }

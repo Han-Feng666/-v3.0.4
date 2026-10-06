@@ -366,16 +366,17 @@ class RootHideManager {
     /** 检测 Zygisk Next 模块是否安装（内置 Shamiko 同等能力，无需额外装 Shamiko）。 */
     fun checkZygiskNextInstalled(): Boolean {
         val r = runRootShell(
-            "for base in /data/adb/modules /data/adb/modules_update; do " +
+            "FOUND=0; " +
+                "for base in /data/adb/modules /data/adb/modules_update; do " +
                 "for f in \"\$base\"/[zZ]ygisk*/module.prop; do " +
                 "test -f \"\$f\" || continue; " +
-                "if grep -Eqi '^id=.*(zygisk[-_ ]?next|zygisksu)' \"\$f\" 2>/dev/null; then echo FOUND; exit 0; fi; " +
-                "if grep -Eqi '^name=.*(Zygisk[ _]?Next|ZygiskSU|Zygisk-Next)' \"\$f\" 2>/dev/null; then echo FOUND; exit 0; fi; " +
+                "if grep -Eqi '^id=.*(zygisk[-_ ]?next|zygisksu)' \"\$f\" 2>/dev/null; then FOUND=1; break; fi; " +
+                "if grep -Eqi '^name=.*(Zygisk[ _]?Next|ZygiskSU|Zygisk-Next)' \"\$f\" 2>/dev/null; then FOUND=1; break; fi; " +
                 "done; " +
-                "done 2>/dev/null; echo NOTFOUND",
+                "done 2>/dev/null; [ \"\$FOUND\" = \"1\" ] && echo FOUND || echo NOTFOUND",
             6
         )
-        return r.output.trim() == "FOUND"
+        return r.output.trim().contains("FOUND")
     }
 
     /** 尝试自动启用 Zygisk（Magisk 设置写入 + 服务重启）。只在 Magisk 自身上有效，KSU/APatch 有自家 Zygisk 实现。 */

@@ -54,11 +54,16 @@ class AdbPairingClient(private val host: String, private val port: Int, private 
     }
 
     private fun setupTlsConnection() {
-        socket = Socket(host, port)
+        // 必须带连接与读取超时: 配对端口在系统配对弹窗关闭后立即失效,
+        // 无超时的阻塞 connect/handshake 会让配对协程永久卡死, 悬浮窗按钮表现为"点了没反应"
+        socket = Socket()
         socket.tcpNoDelay = true
+        socket.soTimeout = 10_000
+        socket.connect(java.net.InetSocketAddress(host, port), 5_000)
 
         val sslContext = key.sslContext
         val sslSocket = sslContext.socketFactory.createSocket(socket, host, port, true) as SSLSocket
+        sslSocket.soTimeout = 10_000
         sslSocket.startHandshake()
         Log.d(TAG, "Handshake succeeded.")
 

@@ -912,6 +912,8 @@ class AdBlockVpnService : VpnService() {
         sniResolvedFlows.clear()
         synchronized(dnsResponseCache) { dnsResponseCache.clear() }
         decisionLogCache.clear()
+        // 决策缓存 TTL 已延长到 60s，运行配置/开关变更后必须主动清空，保证即时生效
+        RuleRepository.clearDecisionCache()
         synchronized(adIpTargetCache) { adIpTargetCache.clear() }
         synchronized(httpDecryptIpCache) { httpDecryptIpCache.clear() }
         synchronized(httpsDecryptIpCache) { httpsDecryptIpCache.clear() }
@@ -949,6 +951,7 @@ class AdBlockVpnService : VpnService() {
         vendorHintCache.clear()
         synchronized(dnsResponseCache) { dnsResponseCache.clear() }
         decisionLogCache.clear()
+        RuleRepository.clearDecisionCache()
         synchronized(adIpTargetCache) { adIpTargetCache.clear() }
         synchronized(httpDecryptIpCache) { httpDecryptIpCache.clear() }
         synchronized(httpsDecryptIpCache) { httpsDecryptIpCache.clear() }
@@ -981,8 +984,10 @@ class AdBlockVpnService : VpnService() {
         }
     }
 
-    private fun evictConcurrentCache() {
-        val caches = listOf(
+    // 缓存表 + 上限配对表提前构好：evictConcurrentCache 每 1024 包调用一次，
+    // 每次现做 listOf 会产生一次分配，提升为实例字段后零分配
+    private val evictableConcurrentCaches: List<Pair<ConcurrentHashMap<*, *>, Int>> by lazy {
+        listOf(
             appNameCache to VpnConstants.APP_NAME_CACHE_MAX_SIZE,
             domainAppCache to VpnConstants.DOMAIN_APP_CACHE_MAX_SIZE,
             sourcePortAppCache to VpnConstants.SOURCE_PORT_APP_CACHE_MAX_SIZE,
@@ -992,7 +997,10 @@ class AdBlockVpnService : VpnService() {
             vendorHintCache to VpnConstants.VENDOR_HINT_CACHE_MAX_SIZE,
             localProxyTargetAppCache to VpnConstants.LOCAL_PROXY_TARGET_APP_CACHE_MAX_SIZE
         )
-        for ((cache, max) in caches) {
+    }
+
+    private fun evictConcurrentCache() {
+        for ((cache, max) in evictableConcurrentCaches) {
             if (cache.size <= max) continue
             val excess = cache.size - max
             var removed = 0

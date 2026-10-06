@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.SystemClock
 import android.provider.MediaStore
 import com.HanFeng.data.HttpsMitmRepository
 import org.bouncycastle.asn1.x500.X500Name
@@ -36,6 +37,7 @@ import java.security.cert.X509Certificate
 import java.security.spec.X509EncodedKeySpec
 import java.util.Date
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 
 object CertificateAuthorityManager {
     private const val KEYSTORE_TYPE = "PKCS12"
@@ -49,6 +51,20 @@ object CertificateAuthorityManager {
     private val legacyKeystoreNames = setOf("HanFeng-ca.p12")
     private val bcProvider by lazy(LazyThreadSafetyMode.NONE) { BouncyCastleProvider() }
     private val leafCertCache = ConcurrentHashMap<String, GeneratedLeafCertificate>(512, 0.75f, 16)
+
+    /**
+     * 系统 CA store 扫描结果缓存。
+     * AndroidCAStore.load() 会把系统里 150+ 张 CA 证书全部读入内存并逐张做 X.509 比较,
+     * MainActivity.onResume 每次冷启动都会走到这里, 属于纯重复的重 IO + CPU。
+     * 证书安装/卸载只发生在用户手动操作后, TTL 取 5s: 既消除了 onResume 的重复扫描,
+     * 又保证"刚装完证书立刻查询"能拿到最新结果。
+     */
+    private const val CA_STORE_SCAN_CACHE_MS = 5_000L
+    private val caStoreScanCache = AtomicReference<Pair<Long, Boolean>?>(null)
+
+    fun invalidateCaStoreScanCache() {
+        caStoreScanCache.set(null)
+    }
 
     fun ensureCaInstalledFiles(context: Context): Result<GeneratedCertificate> {
         return runCatching {
@@ -68,6 +84,8 @@ object CertificateAuthorityManager {
                 HttpsMitmRepository.clearCertificateExportPath(context)
                 HttpsMitmRepository.markCertificateInstallRequested(context)
                 HttpsMitmRepository.clearCertificateInstalled(context)
+                // CA 换了新证书, 之前扫描系统 store 的结果不再可信
+                invalidateCaStoreScanCache()
             }
             HttpsMitmRepository.saveCertificateMeta(context, CERT_ALIAS, CERT_PASSWORD, CERT_PUBLIC_FILE_NAME, CERT_FILE_NAME)
             val downloadDisplayPath = if (HttpsMitmRepository.getCertificateExportPath(context).isNullOrBlank()) {
@@ -84,25 +102,31 @@ object CertificateAuthorityManager {
     }
 
     fun isCaInstalledInSystem(context: Context): Boolean {
-        return runCatching {
+        caStoreScanCache.get()?.let { (cachedAt, result) ->
+            if (SystemClock.elapsedRealtime() - cachedAt < CA_STORE_SCAN_CACHE_MS) return result
+        }
+        val result = runCatching {
             val certDir = File(context.filesDir, CERT_DIR)
             val publicCertFile = File(certDir, CERT_PUBLIC_FILE_NAME)
-            if (!isValidCertificateFile(publicCertFile)) return false
+            if (!isValidCertificateFile(publicCertFile)) return@runCatching false
             val expectedCertificate = FileInputStream(publicCertFile).use { input ->
                 CertificateFactory.getInstance("X.509").generateCertificate(input) as X509Certificate
             }
             val androidCaStore = KeyStore.getInstance("AndroidCAStore")
             androidCaStore.load(null, null)
             val aliases = androidCaStore.aliases()
-            while (aliases.hasMoreElements()) {
+            var found = false
+            while (aliases.hasMoreElements() && !found) {
                 val alias = aliases.nextElement()
                 val installed = androidCaStore.getCertificate(alias) as? X509Certificate ?: continue
                 if (certificateMatchesExpected(installed, expectedCertificate)) {
-                    return@runCatching true
+                    found = true
                 }
             }
-            false
+            found
         }.getOrDefault(false)
+        caStoreScanCache.set(SystemClock.elapsedRealtime() to result)
+        return result
     }
 
     fun syncInstalledState(context: Context): Boolean {
@@ -114,7 +138,6 @@ object CertificateAuthorityManager {
         }
         return actuallyInstalled
     }
-
     private fun certificateMatchesExpected(installed: X509Certificate, expected: X509Certificate): Boolean {
         if (installed.encoded.contentEquals(expected.encoded)) return true
         if (installed.subjectX500Principal == expected.subjectX500Principal && installed.publicKey.encoded.contentEquals(expected.publicKey.encoded)) {

@@ -1,1176 +1,153 @@
 # 用户指令记忆
 
-本文件记录了用户的指令、偏好和教导，用于在未来的交互中提供参考。
-
-## 格式
-
-### 用户指令条目
-用户指令条目应遵循以下格式：
-
-[用户指令摘要]
-- Date: [YYYY-MM-DD]
-- Context: [提及的场景或时间]
-- Instructions:
-  - [用户教导或指示的内容，逐行描述]
-
-### 项目知识条目
-Agent 在任务执行过程中发现的条目应遵循以下格式：
-
-[项目知识摘要]
-- Date: [YYYY-MM-DD]
-- Context: Agent 在执行 [具体任务描述] 时发现
-- Category: [代码结构|代码模式|代码生成|构建方法|测试方法|依赖关系|环境配置]
-- Instructions:
-  - [具体的知识点，逐行描述]
-
-## 去重策略
-- 添加新条目前，检查是否存在相似或相同的指令
-- 若发现重复，跳过新条目或与已有条目合并
-- 合并时，更新上下文或日期信息
-- 这有助于避免冗余条目，保持记忆文件整洁
+本文件记录用户的指令、偏好和教导，以及 Agent 发现的项目知识，按主题合并整理，供未来交互参考。
 
 ## 条目
 
-[规则导入稳定性优先]
-- Date: 2026-06-14
-- Context: 用户明确规则文件和规则源导入的唯一优先级
-- Instructions:
-  - 无论规则文件和规则源多大，导入流程都优先保证快速、不卡死、不崩溃、不闪退。
-  - 大规则导入应先把可直接拦截的域名规则稳定入库，再在后台继续分批分析复杂语义；任何一批失败都应保留已经完成的导入结果。
-  - 导入实现应优先采用流式读取和流式写入；导入阶段不做全量去重，重复规则清理由现有清理功能或后台低优先级任务处理。
-
-[当前阶段不做无障碍跳过]
-- Date: 2026-04-24
-- Context: 用户要求先把广告通过现有拦截能力尽量拦下来，暂不增加类似李跳跳的功能
-- Instructions:
-  - 当前阶段不新增类似李跳跳的无障碍自动跳过功能。
-  - 优先继续增强现有 DNS/VPN 域名拦截能力，把小说类 App 广告先尽量拦截下来。
-
-[优先兼容手机稳定性]
-- Date: 2026-04-24
-- Context: 用户要求继续增强广告拦截，同时尽量兼容手机、少出 bug
-- Instructions:
-  - 继续增强广告拦截时优先选择保守、安全、兼容性更高的实现。
-  - 避免为了提高拦截强度引入容易导致手机兼容性问题或误杀主业务流量的改动。
-
-[首次权限申请边界]
-- Date: 2026-04-24
-- Context: 用户要求首次启动主动申请必要权限，并在失败时提示手动允许
-- Instructions:
-  - 首次启动时只主动申请应用真正需要的标准运行时权限，不要弹出无关权限请求。
-  - `POST_NOTIFICATIONS` 可以主动申请；`VPN` 权限在用户开启拦截时走系统授权链路；应用列表读取若被手机系统额外限制，只能弹窗引导用户去系统设置手动允许。
-
-[小说 App 强拦方向]
-- Date: 2026-04-24
-- Context: 用户要求按建议继续增强拦截能力
-- Instructions:
-  - 在当前 DNS/VPN 架构内优先增强“小说 App 强拦模式”，但只对已识别小说应用生效。
-  - 强拦策略应只针对明确广告厂商和明显广告特征域名，并排除小说主业务域，避免误伤正常阅读和接口请求。
-
-[增强目标与规则页易用性]
-- Date: 2026-04-24
-- Context: 用户要求继续做 DoT/DoH、CNAME、IPv4/IPv6、IP 过滤等增强，同时保证网络稳定、性能流畅，并让规则页更人性化
-- Instructions:
-  - 拦截增强优先选择不会明显影响网络与性能的实现，例如负缓存、CNAME 溯源命中、应用分级和保守 IP 过滤。
-  - 规则页面的控件优先优化高频操作体验，如粘贴添加、清空输入、明确输入提示，避免大改带来新 bug。
-
-[版本与兼容性要求]
-- Date: 2026-06-13
-- Context: 用户要求根据修改次数更新版本号，并检查兼容性与流畅度
-- Instructions:
-  - 版本号按修改次数递进，例如 `1.6.1` 到 `1.6.2`；补丁位每十次进阶，逢10进1：`2.6.9` → `2.6.10` → `2.7.0`。
-  - 更新版本号时同步提升 `versionCode`，便于后续安装覆盖。
-  - 兼容性增强以静态保守实现为主，避免直接改成全流量代理或引入会影响不同机型联网稳定性的高风险策略。
-
-[当前版本展示要求]
-- Date: 2026-05-22
-- Context: 用户要求继续完善 HTTP/3 并把当前版本更新为 3.0-beta
-- Instructions:
-  - 当前版本号使用 `3.0-beta`，同时同步提升 `versionCode`，保证安装覆盖和界面版本展示一致。
-
-[当前版本展示要求 5.5.6-beta]
-- Date: 2026-05-31
-- Context: 用户要求把当前版本改成 5.5.6-beta
-- Instructions:
-  - 当前版本号使用 `5.5.6-beta`，同时同步提升 `versionCode`，保证安装覆盖和界面版本展示一致。
-  - 涉及版本展示或对外标识的位置，如 `build.gradle.kts`、首页版本文案、规则源请求 `User-Agent`，需要保持一致。
-
-[当前版本展示要求 5.8.4-beta]
-- Date: 2026-06-01
-- Context: 用户要求把当前版本改成 5.8.4-beta
-- Instructions:
-  - 当前版本号使用 `5.8.4-beta`，同时同步提升 `versionCode`，保证安装覆盖和界面版本展示一致。
-  - 涉及版本展示或对外标识的位置，如 `build.gradle.kts`、首页版本文案、规则源请求 `User-Agent`，需要保持一致。
-
-[当前版本展示要求 5.9.7]
-- Date: 2026-06-01
-- Context: 用户要求把当前版本改成 5.9.7
-- Instructions:
-  - 当前版本号使用 `5.9.7`，同时同步提升 `versionCode`，保证安装覆盖和界面版本展示一致。
-  - 涉及版本展示或对外标识的位置，如 `build.gradle.kts`、首页版本文案、规则源请求 `User-Agent`，需要保持一致。
-
-[当前版本展示要求 5.9.7-beta]
-- Date: 2026-06-01
-- Context: 用户要求把当前版本改成 5.9.7-beta，并同步当前代码到仓库
-- Instructions:
-  - 当前版本号使用 `5.9.7-beta`，同时同步提升 `versionCode`，保证安装覆盖和界面版本展示一致。
-  - 涉及版本展示或对外标识的位置，如 `build.gradle.kts`、首页版本文案、规则源请求 `User-Agent`，需要保持一致。
-
-[当前版本展示要求 1.0]
-- Date: 2026-06-06
-- Context: 用户要求把当前版本改成 1.0
-- Instructions:
-  - 当前版本号使用 `1.0`，同时同步提升 `versionCode`，保证安装覆盖和界面版本展示一致。
-  - 涉及版本展示或对外标识的位置，如 `build.gradle.kts`、首页版本文案、规则源请求 `User-Agent`，需要保持一致。
-
-[本地构建依赖 Android SDK]
-- Date: 2026-08-19
-- Context: Agent 在执行“构建验证性能模块集成”时发现并更新
-- Category: 环境配置
-- Instructions:
-  - 本项目执行 `./gradlew :app:assembleDebug` 依赖本机 Android SDK，可通过 `ANDROID_HOME` 或项目根目录 `local.properties` 中的 `sdk.dir` 指定。
-  - 工作区缺 `gradle-wrapper.jar` 且本地无 JDK/gradle/SDK 时，需自行准备：安装 `openjdk-17-jdk-headless`，下载 gradle-8.8 发行版到 `/opt/toolset`，下载 Android cmdline-tools 到 `/opt/android-sdk` 并设 `sdk.dir=/opt/android-sdk`，通过 `sdkmanager` 安装 `platforms;android-36` 与 `build-tools;36.1.0` 并 `yes | sdkmanager --licenses` 接受许可。
-  - 使用系统 gradle 而非 wrapper 时，先设 `GRADLE_USER_HOME`（如 `/opt/gradle-home`）避免 native services 初始化失败；内存受限环境用 `-Xmx1536m -XX:MaxMetaspaceSize=512m --no-daemon` 防止 OOM；首次构建需联网解析 AGP 8.5.0 依赖。
-
-[小说专项观测链路]
-- Date: 2026-04-24
-- Context: Agent 在执行“继续补小说 App 域名库并做专项观测”时发现
-- Category: 代码模式
-- Instructions:
-  - 可疑域名样本除了域名和次数，还应记录最近命中的应用名、最近分类厂商以及小说 App 命中次数，优先把小说类样本排在前面。
-  - `SuspiciousDomainsActivity` 适合提供“只看小说 App 专项样本”筛选，便于根据番茄、七猫、起点、书旗、掌阅等真实日志继续补规则。
-  - 可疑样本写入需要做短时间节流，避免同一域名在同一应用里高频命中时持续刷写本地存储，影响手机兼容性和流畅度。
-
-[公开广告规则源接入边界]
-- Date: 2026-04-24
-- Context: Agent 在继续把公开开源广告规则源合并进默认规则时发现
-- Category: 代码模式
-- Instructions:
-  - 公开规则源优先参考 `AdGuardSDNSFilter`、`EasyList China`、`StevenBlack/hosts`，但只保守提取 DNS 级可直接落地的明确域名。
-  - 对 `EasyList/EasyPrivacy` 一类包含 URL、path、cosmetic、regex 的规则源，不能把复杂规则误降级成整域名拦截。
-
-[AdGuard DNS 规则导入兼容补充]
-- Date: 2026-04-25
-- Context: Agent 在执行“继续优化广告拦截并兼容 AdGuard 广告 SDK 域名规则”时发现
-- Category: 代码模式
-- Instructions:
-  - `RuleRepository` 现在适合继续兼容 AdGuard DNS 域名规则中的 `dnstype=`、`important`、`match-case`、`badfilter` 等可安全落地的修饰符。
-  - 对 `domain`、`app`、`denyallow`、`third-party`、`redirect` 等依赖请求上下文或浏览器语义的修饰符，仍应保持不支持，避免误降级成整域名拦截。
-  - VPN 查询命中规则时应优先按真实 DNS `qType` 匹配，避免把 `AAAA` 或 `HTTPS` 等受限规则误扩展成所有记录类型都拦截。
-
-[界面功能保持原样]
-- Date: 2026-04-25
-- Context: 用户要求继续增强广告拦截效果，但确认界面和功能与原来保持一致
-- Instructions:
-  - 后续增强优先放在拦截逻辑、规则库和 DNS 处理链路上，不主动改动现有界面布局和交互。
-  - 若无明确要求，不新增或调整页面功能入口，保持当前界面和功能表现与原来一致。
-
-[HTTP 解密性能优先]
-- Date: 2026-05-21
-- Context: 用户要求继续补强拦截能力，同时明确要求开启 HTTP 解密模式时尽量不要影响上网速度
-- Instructions:
-  - 开启 HTTP 解密后，优先只对命中动态解密目标、已知广告厂商或明显广告特征路径的流量做深度处理。
-  - 普通请求优先直通，避免对大部分正常流量做不必要的请求头改写、解码和重写，降低对上网速度的影响。
-
-[MITM 模式积极增强优先]
-- Date: 2026-06-13
-- Context: 用户明确要求开启 MITM 模式后，以增强拦截效果为首要目标，只要性能占用和网速仍可接受，就不需要保守；后续又要求全流量全路由接管
-- Instructions:
-  - 开启 MITM 模式后，优先提高广告请求、广告响应、奖励解锁、信息流、启动页和播放器广告的深度检查与阻断强度。
-  - 在手机性能占用和网速仍可接受的范围内，MITM 模式下可以采用比普通模式更积极的拦截阈值和特征判定。
-  - MITM 增强可以采用全流量全路由接管，但必须保留证书门槛、普通联网 passthrough、熔断回退和构建测试验证，目标是提升广告覆盖同时保持不断网。
-
-[广告拦截优先且保持联网速度]
-- Date: 2026-05-29
-- Context: 用户要求继续增强广告拦截，尽量把广告都拦下来，同时保持 App 正常上网功能和网速
-- Instructions:
-  - 广告拦截增强可以继续采用更积极的命中策略，优先覆盖明确广告物料、广告厂商、小说广告、评论流广告、推荐流广告和消息中心广告。
-  - 强拦逻辑优先建立在明确广告字段、广告路径、广告厂商和广告物料链接上，保持普通业务流量和网速稳定。
-
-[对齐并超越 AdGuard 拦截能力]
-- Date: 2026-06-13
-- Context: 用户要求只要 AdGuard 能拦截的广告，寒枫也要尽量能拦截，并在五项能力上持续做到更强
-- Instructions:
-  - 后续增强优先对齐并持续强化 AdGuard 有效的能力层，包括规则语义兼容、协议覆盖、HTTPS MITM 成熟度、App 级广告识别、稳定性和误伤控制。
-  - 每轮增强都应尽量落到可测试的小步改动，覆盖 MITM 响应体识别、HTML cosmetic 清洗、脚本注入、协议降级和真机日志样本补规则。
-  - Shizuku 权限优先用于提升连接归属识别、应用级规则命中和流量定位准确率，再把这些识别结果用于增强拦截决策。
-
-[充分利用现有权限提高拦截能力]
-- Date: 2026-05-29
-- Context: 用户要求继续执行当前增强任务，并充分利用 App 已具备的所有功能权限来提高拦截能力
-- Instructions:
-  - 后续增强优先把现有已接入的 `VPN`、`HTTP decrypt`、`QUERY_ALL_PACKAGES`、`Shizuku` 等能力真正用满，用于提升连接归属识别、应用级规则命中、小说强拦判断和解密路由准确率。
-  - 权限利用优先聚焦在提升拦截准确率和覆盖率，保持现有界面与授权边界不变。
-
-[Shizuku 应用级强拦联动]
-- Date: 2026-06-01
-- Context: Agent 在执行“把 Shizuku 的权限用满并对全流量更精准拦广告”时发现
-- Category: 排错调试
-- Instructions:
-  - `AdBlockVpnService` 适合把 `Shizuku` 连接归属结果直接用于热路径决策，只对已识别高风险应用启用更积极的广告基础设施域名拦截。
-  - 应用级强拦需要继续保留白名单、鉴权域名、媒体主业务和业务核心域保护，避免把更强的归属识别扩展成误杀正常流量。
-
-[Shizuku 就绪检查统一流程]
-- Date: 2026-06-06
-- Context: Agent 在执行“优化 Shizuku 功能”时发现
-- Category: 工作流协作
-- Instructions:
-  - Shizuku 的页面入口适合统一走共享的“预热 user service -> 检查 connection owner / ad control 存活 -> 再给出不可用提示”的流程，避免设置页、治理页、首页各自维护一套判断逻辑。
-  - 当 Binder 可达但权限状态异常时，应同时参考增强服务是否已存活，再决定提示“兼容模式可用”还是“增强服务尚未就绪”。
-
-[AdGuard 请求改写保守落地]
-- Date: 2026-06-06
-- Context: Agent 在执行“优化 Shizuku 功能并补 AdGuard header 支持”时发现
-- Category: 排错调试
-- Instructions:
-  - `header=` 适合先只支持请求头覆盖子集，采用 `Header-Name: value` 编码后透传到 MITM 请求改写链，优先覆盖已有头，其次补充缺失头。
-  - 涉及响应头改写、复杂脚本注入和高副作用 header 语义时，优先继续保守处理，先保证导入兼容和请求改写稳定性。
-
-[默认规则源与原因日志链路]
-- Date: 2026-06-01
-- Context: Agent 在执行“继续补组件级治理、默认规则源和命中原因展示”时发现
-- Category: 工作流协作
-- Instructions:
-  - 远程规则源默认集合适合内置 `寒枫规则`、`EasyList`、`EasyPrivacy`、`oisd big`、`EasyList China`，其中体量更大的补充源可默认关闭，由用户按需开启。
-  - VPN 热路径里的 DNS、HTTP、HTTPS 决策适合统一生成 `reason` 字段，再由日志面板和后续界面直接复用，避免各处各写一套原因文案。
-
-[组件治理候选发现方式]
-- Date: 2026-06-01
-- Context: Agent 在执行“继续补组件级治理体验”时发现
-- Category: 排错调试
-- Instructions:
-  - `SettingsActivity` 适合先读取目标包的 `Activity`、`Receiver`、`Service` 清单，再按 `splash`、`push`、`recommend`、`ad` 等关键词给组件打分，优先展示高相关候选组件。
-  - 组件治理对外操作格式适合统一使用 `package/class` 形式，方便直接复用 `pm disable-user` 和 `pm enable` 链路。
-
-[规则源疑似正常规则需先展示再删除]
-- Date: 2026-05-29
-- Context: 用户要求规则源导入后，对疑似正常规则先展示给用户看，并给出每条理由，再由用户决定删不删
-- Instructions:
-  - 规则源同步或导入后，疑似正常规则不能直接自动删除，应先向用户展示候选规则列表。
-  - 每条候选规则都要给出具体理由，说明为什么判断为疑似正常规则。
-  - 删除动作应由用户确认后执行，保留明确的“删除”与“保留”选择。
-
-[规则源不得默认内置]
-- Date: 2026-06-01
-- Context: 用户明确要求不要内置规则源，并指出内置规则源删不掉且删除会闪退
-- Instructions:
-  - 规则源列表默认保持为空，只有用户手动添加后才显示规则源。
-  - 不要在读取规则源配置时自动注入任何内置默认规则源。
-  - 规则源项应允许用户删除，不能因为“内置”身份拦截删除操作。
-
-[仅拦广告并保持 App 正常功能]
-- Date: 2026-05-30
-- Context: 用户要求继续补强拦截，同时开启拦截后不要影响 App 的正常功能，仅拦截广告
-- Instructions:
-  - 后续拦截增强优先收紧到明确广告流量，只对明确广告域名、广告路径、广告物料、广告 SDK 和广告跳转信号生效。
-  - 普通业务接口、正文接口、登录鉴权、支付、媒体内容和其他主业务流量优先直通，保持 App 正常功能和网速稳定。
-  - 复杂规则可以继续解析适配，但只有在规则能稳定收敛到明确广告目标时才参与拦截，避免把复杂组合规则宽降级成正常业务拦截。
-
-[低耗电与低后台占用优先]
-- Date: 2026-05-22
-- Context: 用户要求在继续增强广告拦截的同时，进一步降低耗电量和后台占用
-- Instructions:
-  - 高频热路径优先使用内存缓存，减少 `SharedPreferences`、系统证书状态和其他持久化状态的重复读取。
-  - 后台周期性工作与延迟任务应尽量收敛，避免重复 `postDelayed`、高频轮询和对普通流量的深度检查。
-  - HTTPS/HTTP 深度处理只对明确命中规则、明确广告厂商或明显广告特征流量触发，普通流量优先直通。
-
-[HTTP3 QUIC 精细处理优先]
-- Date: 2026-05-22
-- Context: 用户要求完善 HTTP/3 支持，同时保持联网稳定和低误杀
-- Instructions:
-  - `HTTP/3 / QUIC` 继续采用保守的精细判断策略，优先结合 DNS 路由缓存、白名单、规则命中和小说强拦信号决定是否阻断。
-  - 对正常业务域名的 `UDP/443` 流量优先放行；对明确广告目标或需要回退到 TCP 做 MITM 的目标再阻断并推动回退。
-
-[加密 DNS 反绕过边界]
-- Date: 2026-04-24
-- Context: Agent 在处理用户提出的 DoH/DoQ/DoT 与 HTTPS 解密拦截需求时发现
-- Category: 依赖关系
-- Instructions:
-  - 当前项目可以继续增强 `DoH/DoQ/DoT/HTTPDNS` 反绕过域名与公共 DNS IP 黑名单。
-  - 当前项目不做 `HTTPS MITM` 解密拦截，仍保持 DNS/IP 级最小接管 VPN 架构，优先保证稳定性与正常联网体验。
-
-[规则解析兼容边界补充]
-- Date: 2026-04-24
-- Context: Agent 在继续扩充小说广告域名与规则导入兼容时发现
-- Category: 代码模式
-- Instructions:
-  - `RuleRepository` 的导入解析现在额外兼容行尾注释、`ipset=/.../`、`nftset=/.../` 以及更多 `hostname/domain` 精确域名别名变体。
-  - 兼容扩展仍只提取“明确域名型”规则，不能把 `keyword`、`regex`、`path`、`ip-cidr`、逻辑组合规则降级成整域名拦截。
-
-[直接提供代码与放置路径]
-- Date: 2026-04-22
-- Context: 用户要求生成可直接导入 Android Studio 打包的项目文件
-- Instructions:
-  - 回复以简体中文输出。
-  - 优先直接提供代码和文件放置路径，便于用户在本地建立工程文件。
-
-[Android 广告拦截工程骨架]
-- Date: 2026-04-22
-- Context: Agent 在执行 Android 广告拦截 App 初始化开发时发现
-- Category: 代码结构
-- Instructions:
-  - 工程采用单模块 `app/` 结构，使用 Kotlin + XML + ViewPager2 三屏滑动布局。
-  - VPN 实现采用 `VpnService` 仅接管本地 DNS 地址和常见 DoT 目标地址的路由，避免全流量代理导致断网。
-  - 规则、统计、白名单、日志分别放在 `data/`，DNS 报文和包解析分别放在 `dns/` 与 `service/`。
-
-[正式外链与规则页视觉要求]
-- Date: 2026-04-22
-- Context: 用户补充正式下载链接、办卡链接、QQ群号与左右两侧页面详细布局规格
-- Instructions:
-  - 规则下载按钮点击后先复制密码 `aehi`，再打开 `https://hanfengnb.lanzoul.com/b0j1elsrg`。
-  - 办卡按钮点击后打开 `https://h5.lot-ml.com/ProductEn/Index/120d6424545c4be5`。
-  - QQ 群按钮点击后按群号 `573309536` 唤起 QQ 加群。
-  - 左侧规则页需要增加标题、规则统计标签、规则列表标题和带计数的多选工具栏。
-  - 右侧统计页需要增加“拦截详细”和“拦截排行榜”标题，并优化统计卡片与排行榜布局。
-
-[品牌标识与资源占位要求]
-- Date: 2026-04-22
-- Context: 用户指定正式包名、应用名，并要求预留自定义图标、背景图、排行榜奖牌图标接口
-- Instructions:
-  - Android 包名使用 `com.HanFeng`。
-  - 应用名使用 `寒枫`，中间主界面标题使用 `寒枫 · 广告拦截`。
-  - 需要预留自定义应用图标资源接口，方便后续替换。
-  - 需要预留自定义背景图资源接口，左右中三个界面共用。
-  - 排行榜前三名需要使用金银铜奖牌图标，并预留可直接替换的资源文件名。
-
-[拦截准确性优先]
-- Date: 2026-04-22
-- Context: 用户强调广告拦截必须尽量精准，且不能影响手机正常上网
-- Instructions:
-  - 所有对外说明文案应优先强调“仅拦截命中广告规则的域名，其他流量完全透传”。
-  - 避免在文案中承诺当前实现未完整支持的规则能力，优先保证网络可用性与真实描述一致。
-
-[沉浸式界面与白名单要求]
-- Date: 2026-04-22
-- Context: 用户要求修复状态栏遮挡、背景图拉伸、白名单逻辑与闪退问题，并输出完整目录说明
-- Instructions:
-  - 三个界面的文字和控件都必须位于状态栏下方，不能被状态栏遮挡。
-  - 背景图需要自适应显示，避免明显拉伸。
-  - 所有控件卡片和弹窗使用白色半透明背景与黑色文字。
-  - 白名单逻辑必须是默认全部应用受拦截，加入白名单的应用完全放行。
-  - 优先修复影响使用的闪退问题，并在最终回复中列出全部目录、文件名和功能说明。
-
-[Android 构建与 VPN 热重载约束]
-- Date: 2026-04-22
-- Context: Agent 在继续排查“闪退/不可用”问题时发现
-- Category: 构建方法
-- Instructions:
-  - 项目 `app` 模块需要 `org.jetbrains.kotlinx:kotlinx-coroutines-android`，因为 `AdBlockVpnService` 使用了 `CoroutineScope`、`Dispatchers` 和 `launch`。
-  - 本地构建需要可用的 JDK 17 环境；当前工作区若未设置 `JAVA_HOME`，`./gradlew assembleDebug` 会在进入编译前失败。
-  - 白名单变更后需要重载 `AdBlockVpnService` 才能立即更新 `addDisallowedApplication` 生效范围。
-
-[签名与系统版本兼容要求]
-- Date: 2026-04-22
-- Context: 用户补充 Android 发布签名与适配范围要求
-- Instructions:
-  - 发布包需要支持 V1、V2、V3 三种 APK 签名方案。
-  - 应用需要兼容 Android 7 到 Android 16。
-
-[权限与低版本兼容优先]
-- Date: 2026-04-22
-- Context: 用户要求优先修复闪退、兼容性和权限问题
-- Instructions:
-  - 在继续功能开发前，优先修复 app 闪退、权限申请和 Android 7+ 兼容问题。
-
-[Android 7 兼容实现要点]
-- Date: 2026-04-22
-- Context: Agent 在为 Android 7+ 兼容做静态修复时发现
-- Category: 环境配置
-- Instructions:
-  - `minSdk` 调整到 24 后，应避免直接依赖 `java.time.LocalDate` 这类在旧版本上需要额外 desugaring 的 API。
-  - Android 13+ 需要在运行时申请 `POST_NOTIFICATIONS`，适合在用户开启 VPN 前请求，以减少前台服务通知异常。
-
-[稳定性与性能优化优先级]
-- Date: 2026-04-22
-- Context: 用户进一步明确闪退、卡顿、规则管理和 VPN 行为的优化方向
-- Instructions:
-  - 优先修复点击“使用说明”“规则”闪退以及无规则时断网问题。
-  - 打开黑白名单等重页面时，应用列表加载必须放到后台线程，并显示进度圈，完成后自动隐藏。
-  - RecyclerView 页面避免耗时渲染，应用图标应异步加载，列表布局尽量精简。
-  - VPN 线程应降低优先级，并尽量使用阻塞模式避免空转耗 CPU。
-  - 规则厂商映射应扩充为“中文名 (英文名)”格式，规则分组默认折叠。
-  - 非广告规则筛选需要展示明确结果列表，并让用户选择“保留所选”或“删除其余”。
-  - 统计数据需要在拦截事件发生后及时刷新到 UI。
-
-[规则导入分析与规则缓存]
-- Date: 2026-04-23
-- Context: Agent 在执行“高级规则分析功能”和规则页修复时发现
-- Category: 代码模式
-- Instructions:
-  - 规则页保留“直接导入”和“高级规则分析”两个入口；高级分析需在导入前展示安全规则、例外规则、重复项、被跳过的高级修饰符和厂商分布。
-  - `RuleRepository` 需要缓存规则列表、域名集合和自定义厂商映射，避免 VPN 每次 DNS 判断都重复读取 `SharedPreferences`。
-  - DNS 命中判断应基于域名后缀候选集合和缓存域名集合做快速匹配，减少 VPN 路径上的主线程外开销。
-
-[厂商归类与 Gradle 镜像要求]
-- Date: 2026-04-23
-- Context: 用户要求继续扩充厂商识别并修改 Wrapper 下载源
-- Instructions:
-  - 厂商识别要覆盖国内外主流广告与平台厂商，并尽量把同集团、同母公司的子品牌归并到同一厂商分组。
-  - Gradle Wrapper 默认使用腾讯云镜像 `https://mirrors.cloud.tencent.com/gradle/gradle-8.8-bin.zip`。
-  - `gradle-wrapper.properties` 中保留阿里云镜像 `https://mirrors.aliyun.com/macports/distfiles/gradle/gradle-8.8-bin.zip` 作为注释备用地址。
-
-[规则导入与主要按钮样式调整]
-- Date: 2026-04-23
-- Context: 用户要求继续调整规则页交互、日志入口位置、主按钮视觉和排行榜紧凑度
-- Instructions:
-  - 高级规则解析要与导入规则文件合并，选择文件后自动导入，再在后台完成分析并向用户展示分析结果。
-  - 原“高级规则分析”位置改为“导出日志”功能入口。
-  - 所有主要操作按钮使用白色半透明背景，约 50% 不透明度，保留黑色细边框、圆角和深灰文字。
-  - 需要继续修复点击已导入规则、打开使用说明时的闪退现象。
-  - 右侧排行榜条目和卡片都要更紧凑：条目上下间距缩小，卡片整体最小高度同步缩小。
-
-[厂商与应用排行榜识别增强]
-- Date: 2026-04-23
-- Context: 用户继续要求减少“其它/未知应用”并按本地应用统计拦截来源
-- Instructions:
-  - 厂商识别优先使用命中的规则分组结果，其次再回退到域名关键字识别，以减少“其它 (Other)”。
-  - 厂商库继续补充全球主流广告与程序化广告平台，并将历史别名归并到统一集团名称。
-  - 应用排行榜优先显示本地应用名和包名；`未知应用` 与 `其它` 在排行榜排序中应尽量靠后显示。
-
-[规则点击交互与排行榜视觉继续收紧]
-- Date: 2026-04-23
-- Context: 用户要求继续修复规则列表闪退、说明入口失败、右侧排行榜空隙和识别精度问题
-- Instructions:
-  - 已导入规则项改为单击无响应，避免点按闪退；长按进入删除操作。
-  - “使用说明”点击后不能再弹失败提示，应改为更稳定的展示方式。
-  - 右侧排行榜条目上下间隙继续缩小，排行榜容器高度也要进一步缩短。
-  - 主要面板和控件视觉需要明显保持白色半透明，不能看起来像黑色半透明。
-  - 厂商分类要继续细化，尽量覆盖国内常见大厂与主流广告平台。
-  - 应用拦截统计应尽量直接识别真实本地应用，减少出现“未知应用”。
-
-[厂商识别采用更激进关键词匹配]
-- Date: 2026-04-23
-- Context: 用户要求国内外厂商识别都增加关键词命中能力，例如小米可通过 `mi` 识别
-- Instructions:
-  - 厂商识别除现有域名模式外，还应增加更激进的关键词匹配能力。
-  - 国内外主流厂商都需要补充常见品牌词、缩写词、SDK 词和域名片段。
-  - 对高频厂商可使用短关键词辅助识别，但要尽量放在更长、更明确的词后面，降低误判。
-
-[右侧页底部外链入口布局]
-- Date: 2026-04-23
-- Context: 用户要求把“免费领流量卡”和“加入群聊”从主界面移到右界面排行榜下方
-- Instructions:
-  - “免费领流量卡”和“加入群聊”不再放在主界面按钮区。
-  - 两个按钮需要放到右界面排行榜最下面，横向并列显示。
-
-[首页标题与主控件视觉调整]
-- Date: 2026-04-23
-- Context: 用户要求继续调整主界面标题文案、字体气质和三个主控件的位置
-- Instructions:
-  - 主界面标题文案从“寒枫广告拦截”改为“寒枫”。
-  - 首页标题字体要更飘逸一些，可优先使用更具手写感或装饰感的系统字体方案。
-  - 主界面剩余三个主要控件需要整体下移一点，避免视觉重心过高。
-
-[细边框与排行榜完整展开要求]
-- Date: 2026-04-23
-- Context: 用户要求统一边框颜色、完整展开排行榜，并继续减少“未知应用”
-- Instructions:
-  - 所有按钮、卡片、弹窗的细边框统一使用浅黑色。
-  - 右侧排行榜点击“查看更多”后，必须真正展开显示完整榜单，而不是只改文案。
-  - 应用拦截排行中的“未知应用”需要继续通过缓存和回退识别尽量替换为真实应用名。
-
-[首页控件位置与统一容器底色]
-- Date: 2026-04-23
-- Context: 用户要求首页控件再下移一点，并让所有控件和按钮与规则详细列表容器使用同样的颜色和透明度
-- Instructions:
-  - 首页三个主控件需要继续下移一点。
-  - 所有按钮、控件、卡片、弹窗按钮的底色和透明度统一与规则详细列表容器一致。
-  - 统一优先复用 `bg_panel` / `hf_surface` 这一套颜色源，避免按钮和容器颜色再出现偏差。
-
-[完整榜单弹窗与翻页动画]
-- Date: 2026-04-23
-- Context: 用户要求排行榜完整榜单改为弹窗查看，并让滑动切页更像书翻页
-- Instructions:
-  - 点击“查看完整榜单”时，使用弹窗展示完整厂商或应用榜单。
-  - 左右滑动切换三个页面时，需要增加更柔和的书页翻动动画，降低切换生硬感。
-  - 应用识别继续增强，优先减少排行榜里的“未知应用”。
-
-[三页独立背景的主容器约束]
-- Date: 2026-04-23
-- Context: Agent 在排查“颜色没变化、背景图不够独立”时发现
-- Category: 代码结构
-- Instructions:
-  - `activity_main.xml` 不应再叠加总背景图或总遮罩层，否则会压住 `fragment_home.xml`、`fragment_rules.xml`、`fragment_stats.xml` 各自的背景图效果。
-  - 三页独立背景生效时，主容器应尽量只保留 `ViewPager2`，让页面自己的背景和半透明控件直接呈现。
-
-[VPN 上游 DNS 过滤约束]
-- Date: 2026-04-23
-- Context: Agent 在排查“广告未拦住、DNS 可能回环”时发现
-- Category: 依赖关系
-- Instructions:
-  - `AdBlockVpnService.resolveDnsServers()` 需要过滤本地虚拟 DNS 地址（如 `10.99.0.2`、`fd66:66::2`），避免 VPN 启动后把查询再次发回自己导致无效回环。
-  - 若系统动态 DNS 不可用，应回退到多个常见公共 DNS，优先保证未命中规则时仍能正常解析。
-
-[日志导出单文件覆盖要求]
-- Date: 2026-05-31
-- Context: 用户要求下载目录中的日志文件只保留一个，每次生成时覆盖上一次
-- Instructions:
-  - 导出到下载目录的日志文件使用固定文件名，并复用同一个目标文件。
-  - 每次重新生成日志文件时，覆盖上一次内容，并清理下载目录中同名旧副本。
-
-[小说类广告拦截与交互优化要求]
-- Date: 2026-04-23
-- Context: 用户补充小说 App 常见广告类型、权限体验、排行榜展示和页面切换要求
-- Instructions:
-  - 要尽量拦截小说类 App 常见广告，包括开屏、Banner、章节插屏、原生广告、弹窗广告、任务中心广告、退出挽留页等，但不能影响正常网络连接。
-  - 三个页面切换动画需要继续优化，降低当前过硬的切换感。
-  - “查看完整榜单”点击后应像“使用说明”一样进入独立文本窗口展示完整榜单。
-  - 应用需要的权限应尽量主动申请，减少用户手动去系统里开启的步骤。
-  - 应用拦截排行榜只显示名次、应用名和数量，不显示包名。
-
-[首页按钮状态与点击反馈要求]
-- Date: 2026-04-23
-- Context: 用户要求首页主控按钮状态实时变化、所有按钮增加点击效果，并继续强化兼容性与稳定性
-- Instructions:
-  - 点击“开启拦截”后，首页主按钮文案需要切换为“停止拦截”。
-  - 所有按钮都需要有明显但稳定的点击反馈效果。
-  - 左右界面切换动画继续朝“翻页效果”优化。
-  - 主控大按钮保持白色半透明底、黑色细边框。
-  - 兼容性优先，尽量减少因状态切换和动画带来的闪退问题。
-
-[沉浸式状态栏与首页主控件位置要求]
-- Date: 2026-04-23
-- Context: 用户要求背景图延伸到状态栏，但控件本身保持避开状态栏，并且首页三个主控件尺寸不要改动
-- Instructions:
-  - 首页三个主控件的大小保持不变，不要继续改宽高。
-  - 首页三个主控件整体再下移一些。
-  - 背景图需要延伸到手机状态栏区域。
-  - 页面控件本身不要延伸到状态栏内，保持沉浸式状态栏下的安全间距。
-
-[移除翻页动画与按钮统一卡片样式]
-- Date: 2026-04-23
-- Context: 用户反馈所有界面重叠且划不动，要求删除翻页效果，并统一主要按钮样式到统计卡片样式
-- Instructions:
-  - 删除页面翻页动画，优先保证左右滑动稳定可用。
-  - `免费领取流量卡`、`加入群聊`、`开启拦截`、`使用说明`、`黑白名单`、`添加`、`导入并分析`、`下载规则`、`导出日志`、`筛选非广告规则` 这些按钮统一使用“拦截详细”统计卡片同源的样式和颜色。
-
-[按钮白色半透明与 VPN 启动修复]
-- Date: 2026-04-23
-- Context: 用户要求继续执行按钮样式和开启拦截故障修复
-- Instructions:
-  - 所有按钮颜色统一改成白色，并保留半透明效果。
-  - 点击“开始拦截/开启拦截”时必须正确申请权限并拉起 VPN 授权链路。
-  - 需要优先修复点击开启拦截时未打开 VPN 且闪退的问题。
-
-[规则筛选闪退与按钮白色可见性]
-- Date: 2026-04-23
-- Context: 用户反馈点击“筛选非广告规则”闪退，且按钮仍显示为黑色半透明
-- Instructions:
-  - 优先修复“筛选非广告规则”点击后的闪退问题。
-  - 所有按钮必须明确呈现为白色半透明，不能看起来像黑色半透明。
-
-[加强规则分析与广告拦截覆盖]
-- Date: 2026-04-23
-- Context: 用户要求增强规则分析、加强大小广告厂商拦截，减少漏拦广告
-- Instructions:
-  - 规则导入分析要尽量兼容更多安全的域名规则格式。
-  - 厂商识别要继续覆盖大小广告平台和聚合 SDK。
-  - 内置广告规则需要继续补充常见广告 SDK、聚合平台和小说类广告相关域名。
-
-[按钮默认强制白色半透明]
-- Date: 2026-04-23
-- Context: 用户要求所有控件按钮默认改成白色半透明，并强制保持白色半透明
-- Instructions:
-  - 按钮和主要控件的默认底色必须强制为白色半透明。
-  - 主题层需要避免系统或 Material 默认样式把按钮覆盖成深色。
-
-[筛选规则失败与拦截器实战增强]
-- Date: 2026-04-23
-- Context: 用户要求修复“筛选非广告规则”点击后失败，并继续把广告拦截器做得更能打
-- Instructions:
-  - “筛选非广告规则”入口必须可稳定使用，不能只提示失败。
-  - 广告拦截增强应优先提升真实命中率，但仍保持 DNS 级、命中才拦、尽量不断网的原则。
-
-[未知广告域名入口与指定厂商补拦]
-- Date: 2026-04-23
-- Context: 用户要求增加未知/可疑广告域名查看入口，按钮更白，并补拦指定厂商广告
-- Instructions:
-  - 需要提供未知或可疑广告域名的可见入口，方便继续补规则。
-  - 控件按钮透明度要再增加一点，但仍保持白色半透明。
-  - 需要补充 QXM、UBIX、VIVO、中关互动 的厂商识别和拦截覆盖。
-
-[规则页交互修正]
-- Date: 2026-04-23
-- Context: 用户要求修复规则页两个入口的实际交互问题
-- Instructions:
-  - “筛选非广告规则”应先弹出窗口展示筛出的规则，再让用户选择删除哪些、保留哪些。
-  - “可疑域名”入口不能只读展示，应支持继续添加拦截或其它后续操作。
-
-[可疑域名页面增强]
-- Date: 2026-04-23
-- Context: 用户要求继续增强可疑域名交互
-- Instructions:
-  - 可疑域名需要支持搜索。
-  - 需要支持批量添加拦截规则。
-
-[可疑域名页筛选与规则页刷新]
-- Date: 2026-04-23
-- Context: 用户要求继续完善可疑域名页与规则页联动
-- Instructions:
-  - 可疑域名页面需要增加“只看未添加”的筛选开关。
-  - 批量添加后需要自动返回并刷新规则页。
-  - QXM、UBXI、 中关互动需要按公开广告请求域名、上报域名继续补充识别与拦截覆盖。
-
-[可疑域名已添加筛选与 SDK 标识识别]
-- Date: 2026-04-23
-- Context: 用户要求继续增强可疑域名筛选，并把厂商 SDK 包名接入识别链路
-- Instructions:
-  - 可疑域名页面需要增加“只看已添加”筛选。
-  - “只看未添加”和“只看已添加”应互斥，避免筛选状态冲突。
-  - QXM、UBIX、中关互动的 SDK 标识和核心包名需要并入厂商识别词表，供日志识别和归类复用。
-
-[厂商命名与可疑域名列表增强]
-- Date: 2026-04-23
-- Context: 用户要求继续增强广告厂商覆盖和可疑域名页展示与操作
-- Instructions:
-  - 导入规则分析里的厂商分类名称统一使用“中文名 (国际名)”格式。
-  - 趣盟广告、美团等广告厂商需要继续补充更完整的识别与拦截覆盖。
-  - 可疑域名列表项高度要更高，中间空白不要太大。
-  - 可疑域名列表需要显示出现时间和出现次数。
-  - 用户需要能对可疑域名做单选或多选后添加进拦截规则。
-
-[厂商别名归一化与可疑域名交互]
-- Date: 2026-04-23
-- Context: Agent 在执行厂商命名统一和可疑域名页收尾时发现
-- Category: 代码模式
-- Instructions:
-  - `RuleRepository.normalizeVendorName()` 需要支持链式别名归一化，否则 `Google (Google Ads)` 这类历史名称不会最终落到“中文名 (国际名)”格式。
-  - 可疑域名页保留“单条添加”直达操作，同时应给列表项长按入口挂回“手动分类后添加/复制域名”等附加操作。
-
-[排行榜预览与说明文案收紧]
-- Date: 2026-04-23
-- Context: 用户要求继续调整统计页排行榜卡片与使用说明页的紧凑度
-- Instructions:
-  - 拦截排行榜卡片内的名次上下间距继续缩小。
-  - 每个排行榜卡片默认显示前五项，完整榜单仅在点击“查看完整榜单”后查看。
-  - 使用说明中每条说明之间的间距需要缩小。
-  - 使用说明末尾增加第 13 条：应用如有BUG或有更好的建议请进群反馈。
-
-[专业化 DNS 拦截与统计稳定性增强]
-- Date: 2026-04-23
-- Context: Agent 在修复高风险问题并增强拦截稳定性时发现
-- Category: 代码模式
-- Instructions:
-  - 上游 DNS 查询失败时不能直接吞包，应该回 `SERVFAIL`，避免用户体感断网。
-  - 被拦截域名对非 A/AAAA 查询类型也要返回合法 DNS 响应，避免客户端查询超时。
-  - 排行榜详情不要通过大字符串 `Intent` 传递完整榜单，应在详情页内按类型重新读取统计数据。
-  - 统计排行榜持久化 map 需要裁剪上限，避免长期使用后数据无限膨胀。
-  - Hosts 规则解析需要支持一行多个域名，提高规则导入覆盖率。
-
-[联网稳定性优先于拦截架构]
-- Date: 2026-04-23
-- Context: 用户明确表示不强求本地 VPN + DNS 级拦截架构，只要求拦广告时不影响正常网络
-- Instructions:
-  - 优先保证用户正常联网，不要为了拦截硬拦会误伤网络的流量。
-  - VPN 只应处理本应用明确接管的本地 DNS 请求，不要把常见公共 DNS 或 DoT 目标整段黑洞掉。
-
-[DNS 稳定性增强策略]
-- Date: 2026-04-23
-- Context: Agent 在继续增强“不断网优先”的广告拦截能力时发现
-- Category: 代码模式
-- Instructions:
-  - 上游 DNS 应优先尝试系统当前 DNS，再回退到内置公共 DNS，整体去重后依次尝试。
-  - 单次 DNS 查询应允许对每个上游做有限重试，避免偶发抖动直接导致失败。
-  - 可以使用短时 DNS 响应缓存，但缓存必须短 TTL、可按原请求事务 ID 重写，避免影响正常解析。
-
-[DNS 健康退避与陈旧缓存容灾]
-- Date: 2026-04-23
-- Context: Agent 在继续提升联网稳定性时发现
-- Category: 代码模式
-- Instructions:
-  - 上游 DNS 需要记录近期失败次数、冷却时间和最近成功时间，优先使用更健康的上游。
-  - 过期不久的 DNS 缓存可以只在所有上游都失败时短暂兜底，避免网络瞬时抖动导致用户体感断网。
-  - 陈旧缓存只能作为失败兜底，不能替代正常实时解析。
-
-[规则引擎与强拦截需求]
-- Date: 2026-04-23
-- Context: 用户要求继续增强规则兼容与反绕过能力
-- Instructions:
-  - 修复“筛选非广告规则”打开失败问题。
-  - 导入规则时尽量减少把国内大厂商广告规则误判为“无法识别”。
-  - 规则引擎需要继续适配更高级但不会明显误伤网络的规则能力。
-  - 需要增加主流公共加密 DNS 反绕过能力，并评估对阿里云 DoH、腾讯 DoH、百度 DoH、运营商 DNS 域名的拦截。
-  - 需要增加广告 SDK 常用 IP/网段黑名单能力，但仍以不影响用户正常上网为前提。
-
-[反绕过域名分类与复杂规则降级]
-- Date: 2026-04-23
-- Context: Agent 在继续修复规则筛选与导入兼容性时发现
-- Category: 代码模式
-- Instructions:
-  - 加密 DNS 反绕过域名需要单独归类，不能继续落到 `其它 (Other)`，否则会被“筛选非广告规则”误删。
-  - 对带 `://`、`*`、`^`、`|` 等特征但无法提取域名的规则，应优先记为复杂规则或不支持项，而不是直接算作 `invalidRules`。
-  - 反绕过域名名单应尽量使用精确服务域名，避免把整站根域名都归入拦截保护分类而误伤正常流量。
-
-[最小 IP 黑名单接管策略]
-- Date: 2026-04-23
-- Context: Agent 在继续实现“尽量不断网”的反绕过能力时发现
-- Category: 代码模式
-- Instructions:
-  - IP 黑名单应优先采用“只给黑名单 CIDR 加 VPN route，命中后直接丢弃”的最小接管方案，避免把全量流量纳入 VPN。
-  - 默认内置名单先覆盖公共 DNS / 反绕过 IP，广告 SDK 的更大 IP 段后续再按证据逐步补充。
-  - 命中黑名单 IP 时应静默丢弃，避免高频日志写入影响性能。
-
-[拦截效果、流畅度与兼容性优先]
-- Date: 2026-04-23
-- Context: 用户要求继续强化拦截效果，同时提升运行流畅度和不同安卓版本机型兼容性
-- Instructions:
-  - 在增强拦截时，优先补充保守且高命中的公共 DNS / 广告目标，不要用激进规则换误伤。
-  - 性能优化优先落在 VPN 热路径、DNS 上游选择和缓存路径，减少频繁系统查询和对象分配。
-  - 兼容性优化优先采用 best-effort 方式处理机型差异，避免单个能力失败导致 VPN 整体建立失败。
-
-[规则来源统计与暂不支持规则清理]
-- Date: 2026-04-23
-- Context: 用户要求继续增强规则管理体验与内置规则覆盖
-- Instructions:
-  - 规则页摘要需要显示内置规则数和用户导入规则数，必要时可附带手动规则和暂不支持规则数量。
-  - 暂不支持的复杂规则应保留为可管理样本，允许用户通过“筛选非广告规则”流程集中删除。
-  - 内置规则库继续补充国内外广告 SDK 域名，但仍需按厂商分类并保持保守，避免误伤正常主站和非广告业务域名。
-
-[支持规则与样本统计口径分离]
-- Date: 2026-04-23
-- Context: Agent 在继续收口规则页摘要与导入分析文案时发现
-- Category: 代码模式
-- Instructions:
-  - 规则页和导入分析中的“规则总数”应优先表示真实参与拦截的 supported rules。
-  - `暂不支持` 规则只作为可管理样本单独统计和清理，不应混入“当前可拦截规则数”。
-
-[广告拦截覆盖率与性能约束]
-- Date: 2026-04-23
-- Context: 用户希望尽量拦下所有 App 广告，同时继续优先保证性能、耗电、空间占用和网络稳定
-- Instructions:
-  - 增强拦截能力时，优先选择轻量、低误伤、低耗电的方案，不为了覆盖率引入重型全流量代理。
-  - 任何需要全 TCP/HTTPS 接管、明显增加耗电或影响联网稳定的方案，都应先明确架构代价，再决定是否实施。
-
-[路径规则安全降级约束]
-- Date: 2026-04-23
-- Context: Agent 在处理用户提供的小说 App 路径级广告规则时发现
-- Category: 代码模式
-- Instructions:
-  - 对 `||domain^*/path`、`|https://domain/path` 这类路径级规则，DNS 规则解析不能偷偷降级成整域名拦截。
-  - 当前架构下这类规则应视为 unsupported/complex pattern，而不是解析成 `domain`，避免误伤正文接口和主业务 API。
-
-[主流小说 App 拦截增强方向]
-- Date: 2026-04-23
-- Context: 用户要求继续补充 1/2/3 三类增强，并尽量覆盖主流小说软件广告
-- Instructions:
-  - 优先补充主流小说 App 常见第三方广告平台域名、公共 DNS/反绕过 IP seed，以及应用识别关键词。
-  - 对番茄小说、七猫小说、起点读书、QQ阅读、书旗小说、掌阅、咪咕阅读、米读小说、纵横小说、17K、长读等应用，优先增强识别和统计归类。
-  - 即使用户希望“拦截更死”，也不要把不确定的正文主 API 或共享 CDN 整域名直接加入默认黑名单。
-
-[全局广告拦截与资源占用约束]
-- Date: 2026-04-23
-- Context: 用户要求尽量屏蔽手机所有广告，同时保证系统和 App 运行流畅
-- Instructions:
-  - 继续优先增强小说 App 底部广告、翻页广告和常见插屏广告的拦截命中率，但不能以明显误伤正文接口为代价。
-  - 拦截开启时应尽量保持低后台占用、低耗电、低额外内存分配；拦截关闭后不应残留自启动或后台驻留行为。
-  - 任何新增拦截能力都需要兼顾流畅度、网络稳定性和关闭后的资源释放。 
-
-[阅读类广告联盟持续扩充]
-- Date: 2026-04-23
-- Context: Agent 在继续补充阅读类广告命中时发现
-- Category: 代码模式
-- Instructions:
-  - 默认规则优先持续扩充广告属性明确的竞价、素材分发、广告投放、广告测量域名。
-  - 对 DoubleClick、AppLovin、Unity Ads、Vungle、InMobi、PubMatic、Taboola、Outbrain、Amazon Ads、Xandr 等阅读类高频广告联盟，持续细分二级域名覆盖。
-
-[规则扩充的保守边界]
-- Date: 2026-04-23
-- Context: Agent 在继续补充“全都补上”时发现
-- Category: 代码模式
-- Instructions:
-  - 即使持续扩充域名名单，也应优先选择 ad, ads, pub, bidder, auction, syndication, measurement, sdk-assets 这类广告属性明确的域名。
-  - 对 personalization、recommendation、main api、content cdn 这类边界不清的域名，默认不要直接加入内置拦截名单。
-
-[规则筛选交互与拦截优先级补充]
-- Date: 2026-04-24
-- Context: 用户进一步明确规则页交互、导入分析与拦截优先级要求
-- Instructions:
-  - “筛选非广告规则”按钮点击后必须弹出结果窗口，窗口内逐条展示被识别出的非广告规则，并允许用户通过每条右侧勾选框选择后删除。
-  - “导入并分析”需要继续增强规则识别覆盖，尽量减少把可支持规则误判为无法识别。
-  - 功能和界面整体形态不能改变，修复应尽量保持现有页面结构与视觉不变。
-  - 不论是重构还是修补，首要目标都是让广告拦截真实生效，同时继续保证网速与正常联网体验。
-
-[规则导入兼容格式补充]
-- Date: 2026-04-24
-- Context: Agent 在排查“导入后仍拦不住广告”时发现
-- Category: 代码模式
-- Instructions:
-  - 外部规则文件常见的不只是 Hosts/AdGuard 域名规则，还包括 `DOMAIN-SUFFIX`、`DOMAIN`、`HOST-SUFFIX`、`HOST`、`dnsmasq`/`server=`/`local=` 这类规则集格式。
-  - 如果导入分析不识别这些格式，用户会出现“规则已导入但实际没多少可拦截规则”的体感问题。
-
-[IPv6 本地 DNS 规范化要求]
-- Date: 2026-04-24
-- Context: Agent 在排查“VPN 已开但广告拦截体感无效”时发现
-- Category: 代码模式
-- Instructions:
-  - `AdBlockVpnService` 判断本地 DNS 目标地址时，不能直接用 IPv6 字面量字符串比较，必须先做 `InetAddress` 标准化。
-  - 否则像 `fd66:66::2` 这类地址在真机包解析后可能变成展开格式，导致 IPv6 DNS 查询未被识别和接管。
-
-[DNS 决策日志需要节流]
-- Date: 2026-04-24
-- Context: Agent 在继续增强“拦截为什么没生效”的排查能力时发现
-- Category: 代码模式
-- Instructions:
-  - `AdBlockVpnService` 的 DNS 调试日志应记录关键决策点：进入 VPN、命中拦截、缓存放行、上游放行、SERVFAIL、非本地 DNS 绕过、黑名单 IP 丢弃。
-  - 这些日志必须按 `domain/qtype/reason` 做节流，避免高频 DNS 请求导致日志 I/O 影响性能和网络体验。
-
-[三页背景图与奖牌图标要求]
-- Date: 2026-04-24
-- Context: 用户要求恢复早期版本的视觉资源能力
-- Instructions:
-  - 首页、规则页、统计页都必须支持分别使用不同的背景图。
-  - 三页背景图优先通过 `assets/custom/` 下的独立文件加载，避免继续与 `drawable` 占位资源发生同名冲突。
-  - 排行榜前三名需要显示金银铜奖牌图标；若运行时未找到奖牌资源，才退回数字名次。
-  - 应用图标继续保留自定义资源入口，允许后续替换前景图标资源。
-
-[视觉资源放置约定]
-- Date: 2026-04-24
-- Context: 用户明确要求将三页背景图和前三奖牌统一放在 assets/custom
-- Instructions:
-  - 三个界面背景图统一从 `app/src/main/assets/custom/` 读取，文件基名分别为 `home_background`、`rules_background`、`stats_background`。
-  - 排行榜前三名奖牌图标统一从 `app/src/main/assets/custom/` 读取，文件基名分别为 `medal_gold`、`medal_silver`、`medal_bronze`。
-  - 应用图标不再由代码侧定制，改为使用 Android Studio 的图标自定义流程处理。
-
-[全面稳定性要求]
-- Date: 2026-04-24
-- Context: 用户要求本轮修改后整体不要出错，且 App 内功能要全部正常
-- Instructions:
-  - 需要优先消除编译错误和明显结构性错误，避免继续引入新问题。
-  - 修复时要检查关键页面和功能链路，确保不是只让代码编过而功能失效。
-
-[Android 编译验证前置条件]
-- Date: 2026-06-01
-- Context: Agent 在执行“检查所有代码，避免再出现崩溃”时发现
-- Category: 环境配置
-- Instructions:
-  - 本项目执行 `./gradlew :app:compileDebugKotlin` 或其他 Android 构建命令前，需要先通过 `ANDROID_HOME` 或 `/workspace/local.properties` 提供可用的 Android SDK 路径。
-  - 缺少 Android SDK 时，完整编译验证会在任务初始化阶段直接失败，稳定性排查需要先区分“代码问题”和“环境缺 SDK”。
-
-[手动输入规则增强]
-- Date: 2026-04-24
-- Context: 用户要求输入框支持一次粘贴多条域名同时添加
-- Instructions:
-  - 规则页输入框需要支持批量粘贴多条域名或规则行并一次性添加。
-  - 批量手动输入应优先复用现有安全解析逻辑，只导入明确的域名规则，避免把复杂规则误降级为整域拦截。
-
-[规则适配范围与 MITM 激进度]
-- Date: 2026-05-26
-- Context: 用户要求尽量适配所有类型的规则，并在不明显影响网络和性能的前提下提升 MITM 激进度
-- Instructions:
-  - 规则引擎应继续扩大可解析、可落地、可参与拦截的规则类型覆盖，优先把更多规则接入现有 DNS 与 MITM 链路。
-  - 开启 MITM 模式后，可在网络稳定和性能可接受的范围内采用更积极的深度检查与阻断策略，减少因门槛过高导致的漏拦。
-
-[Root 守护脚本模式]
-- Date: 2026-07-11
-- Context: Agent 在执行"集成 KSU 模块为原生功能"时发现
-- Category: 代码模式
-- Instructions:
-  - 项目中需要长期轮询进程或文件状态的 Root 守护任务，遵循"JVM 仅作 launcher"模式：通过 `com.HanFeng.adblocker.shizuku.SuSession` 拼 watcher.sh 脚本写入 /data/adb/<namespace>/，再 `nohup sh` 启动后台进程，PID 写入 .pid 文件。
-  - 不要在 JVM 内 Thread { while(true) { suSession.execute(...) } }，因为寒枫被系统杀掉后守护必须继续运行；JVM 重新打开 SuSession 后通过 `kill -0 $(cat pid)` 判断守护是否仍在。
-  - 工作目录命名约定：/data/adb/<FeatureName>/watcher.sh、watcher.pid、watcher.log。脚本中的 `$` 必须用 Kotlin 字符串的 `\$` 转义，不要用 `$$`（shell 中是当前 PID 不是变量标识符）。
-
-[SNI 拦截与 MITM 解耦]
-- Date: 2026-07-12
-- Context: Agent 在执行"评论区/激励/翻页内容级广告未拦"排查时发现
-- Category: 排错调试
-- Instructions:
-  - `AdBlockVpnService.handleHttpDecryptPacket` 历史上在 `httpDecryptEnabled=false` 时直接 return false，导致 SNI 拦截（`shouldBlockBySni`/`SniInterceptor.evaluate`）和 QUIC SNI 拦截都没机会运行——纯 DNS 模式下只有规则库 domain 匹配生效。
-  - SNI 拦截不需要解密 HTTPS：只看 TLS ClientHello 明文 SNI 字段匹配规则后发 TCP RST，对证书绑定 App 也有效。已通过 `shouldBlockBySniWithoutMitm` 在 `httpDecryptEnabled=false` 时独立运行。
-  - `SniInterceptor.evaluate` 零 MITM 依赖：只依赖 `RuleRepository`（规则库）+ `ScoredBlockCache`（学习缓存）+ `isProtectedTrafficDomain`（业务保护），纯 DNS 模式可用。
-  - 评论区/底部卡片/翻页/激励类内容级广告（URL 路径区分，如 `api.xxx.com/comment/list`）SNI 仍拦不住——同域名不同路径，只能在 `httpDecryptEnabled=true` 时由 `HttpMitmFilter` 内容级过滤拦掉。
-
-[Shizuku fork 内置集成]
-- Date: 2026-07-18
-- Context: Agent 在执行"Shizuku 全量 fork 内置主 app"时发现
-- Category: 构建方法
-- Instructions:
-  - shizuku-fork 子工程含 11 个 Gradle module：`aidl / shared / common / api / provider / server-shared / rish / starter / server / manager`，全部在 `/workspace/shizuku-fork/`。除 `rish` (Android 无模拟器运行环境，但能编 AAR) 和 `manager` (含 native build)外其他都纯 Java/Kotlin 库。
-  - 主 app 通过 `implementation(project(":shizuku-fork:manager"))` 等依赖把 fork module 集成进 APK，APK 自动包含 `lib/<abi>/libshizuku.so` (starter native binary)、`librish.so` (rich shell)、`libadb.so` (adb 配对 SSL)全部 4 个 ABI。
-  - 集成模式：A 路线，客户端 SDK 仍用 `dev.rikka.shizuku:api:13.1.5`，只把 starter native binary 内置。`BuiltInShizukuStarter.activateViaRoot` 从找外部 Shizuku APK 改为读主 app 自身 `applicationInfo.sourceDir`+`nativeLibraryDir/libshizuku.so`，root shell `<libshizuku.so> --apk=<apkPath>` 启动 server。
-  - `BuiltInShizukuStarter` 需在 app 启动时调 `BuiltInShizukuStarter.init(context)` 保存 application context 才能跑 activate。
-  - fork starter.cpp 内 `SERVER_NAME="hanfeng_shizuku_server"`（避免与官方 Shizuku process 名冲突），`PACKAGE_NAME="com.HanFeng.shizuku"`（拼 authority），`SERVER_CLASS_PATH="rikka.shizuku.server.ShizukuService"`（Java 包名不变）。
-  - Shizuku License 第 6 条限制字符串：applicationId=`com.HanFeng.shizuku`、permission=`com.HanFeng.permission.shizuku.*`、intent extra prefix=`com.HanFeng.shizuku.intent.extra.*`、REQUEST_PERMISSION action=`com.HanFeng.intent.action.REQUEST_PERMISSION`，全部不得用 `moe.shizuku.privileged.api` / `moe.shizuku.manager.permission.*` 等。Java 内部包名 `moe.shizuku.*` / `rikka.shizuku.*` 保留不动。
-  - 启动主 app 句柄 `BuiltInShizukuStarter.stop` 中 `pkill -f 'hanfeng_shizuku_server'` 与 `rm /dev/socket/hanfeng_shizuku_server`。
-  - 主 app Build 时强制 `androidx.core:core:1.13.1` 与 `core-ktx:1.13.1` 否则 fork:manager 拉到 1.16.0 要 AGP 8.6+ 与现行 AGP 8.5.0 不兼容（见 `app/build.gradle.kts` `configurations.all resolutionStrategy.force`）。
-  - fork manager module 路径 `/workspace/shizuku-fork/manager/`：res 已精简到只保留 `drawable/ic_launcher.xml + ic_system_icon.xml + ic_default_app_icon_background.xml` + `values/strings.xml + styles.xml + themes.xml + themes_overlay.xml` + `values-night/styles.xml` + `values-v31/themes_overlay.xml` + `mipmap-xxxhdpi/ic_launcher.png` 等。所有 layout 已删（RequestPermissionActivity 已改纯 Java 构造对话框）。所有 values-XX locale strings 已删（只保留默认 values/strings.xml）。
-  - NDK 路径：`/usr/lib/android-sdk/ndk/26.1.10909125`（已装），cmake 3.22.1 在 `/usr/lib/android-sdk/cmake/3.22.1/bin/`。CMakeLists.txt `cmake_minimum_required(VERSION 3.22)`，原本要 3.31+ 因环境 cmake 老改降了。
-  - shizuku-fork 子 modules 的 build.gradle.kts 中 plugin 不声明版本（通过 `settings.gradle.kts` pluginManagement.plugins 集中管理）。
-  - shizuku-fork/:aidl 必须设 `buildFeatures.aidl = true`，否则 AIDL 不生成 stub → server/common/api 找不到 `moe.shizuku.server.IShizukuService` 包报错。
-  - `moe.shizuku.manager.application` 是 fork manager 模块全局 lateinit 变量（见 `application.kt`），需要主 app 启动时调 `moe.shizuku.manager.init(application)` 才能让 `Starter.kt` 拿到包路径。当前主 app 暂未做这步——只 BootCompleteReceiver 在开机时才会触发该路径，运行态没用。
-  - 编译验证：`./gradlew :app:assembleDebug` 全量通过；APK 含上述 12 个 .so。
-
-[设备标识三个字的修正]
-- Date: 2026-07-18
-- Context: Agent 在执行"root 区域的主板 ID 显示成内核版本号、SN 码错误"修复时发现
-- Category: 业务规则
-- Instructions:
-  - 主板 ID 正确含义 = SoC 平台代号（全小写英文），如高通 lahaina/taro/kalama、谷歌 oriole/panther/shiba、MTK mt6895/mt6983/sun。绝不可能是 3.9.0 这种内核版本号，也绝不可是 PVT/EVT 工程版本号。
-  - 真正能读到主板平台代号的 prop 集（共 6 条，按主→次排序）：ro.board.platform / ro.boot.board.platform / ro.board.hardware / ro.hardware / ro.boot.hardware / ro.soc.model。
-  - 之前错误把 ro.boot.hardware.revision / ro.boot.hwversion / ro.boot.hwlevel / ro.boot.hardware.sku / ro.boot.hardware.id / ro.boot.hardware.mlbid / ro.boot.em.modelid / ro.boot.motherboard.id 塞进"主板 ID"，这些 prop 在大多数设备上由 bootloader 写成内核版本号字符串或工程版本号（PVT/EVT），已彻底移除。
-  - 主板 ID 随机生成器应当从真实已知 SoC 平台代号表(lahaina/taro/sun/oriole/mt6895/...)选一个返回，而不是瞎编 8 位 hex 字符串。
-  - 主板 ID 校验 ^[a-z0-9._\-]+$（必须小写，与历史 SoC 命名一致）。
-  - SN 码真实含义 = 拨号盘 *#06# 第三行「SN:」行的值，就是 ro.serialno / ro.boot.serialno 这组硬件序列号，与"修改主板序列号"工具修改的是同一组 prop。两者只是 UI 同一值的不同入口名。SN_PROPS 只含 3 条：ro.serialno / ro.boot.serialno / persist.sys.serialno。
-  - 之前错误 SN_PROPS 还含 gsm.serial(实为 IMEI1 别名，改它等于改 IMEI)、ro.product.sn/sys.sn/sys.xiaomi.sn/ro.xiaomi.sn(产品 SN 不是拨号盘 SN)、persist.radio.sn/ril.sn/gsm.sn(RIL-side serial 可能等于 IMEI)，全部已移除。
-  - SN 码正确格式 = 厂商自定义不定长字符串，可能含字母、数字、斜杠(如 50936/R3YT02307)；不是 16 位十六进制(那是 Android ID 的格式)；generateRandomSn 已是「5 位 digits + "/" + 8 位 uppercase letter」，符合该格式。
-  - SettingsActivity prefill 优先：主板 ID 取 ro.board.platform > ro.boot.board.platform > ro.hardware > ro.boot.hardware > ro.board.hardware > ro.soc.model；SN 码取 ro.serialno > ro.boot.serialno > persist.sys.serialno。不再 fallback 到不存在或被乱填的 prop。
-  - 用户区分澄清：主板 ID(平台代号) 与 主板序列号(ro.serialno) 与 SN 码(同 ro.serialno，只是另一个入口)——主板 ID 才是真正独立字段,后两者是同源。
-
-
-[项目知识：证书安装模块]
-- Date: 2026-07-26（2026-07-28 修正）
-- Context: 用户在确认任务时说明；后续用户反馈"安装证书到系统"功能失效
-- Category: 运维部署
-- Instructions:
-  - SystemCertInstaller 当前实现优先持久化写盘（remount rw /system + cp；失败再 tmpfs overlay）；
-    两个手段都失败才退化到 bind mount（重启失效）。
-  - persistent 标记反映是否写盘：success.persistent=true 时 UI 提示"重启后仍生效"，
-    false 时提示"重启后失效"。
-  - 目标目录：/system/etc/security/cacerts 主路径（旧设备）；/apex/com.android.conscrypt/cacerts
-    为 Android 14+ conscrypt 引擎实际加载点，但 APEX 不可写，仅可用 bind mount + nsenter。
-
-[性能模块集成约定]
-- Date: 2026-08-19
-- Context: Agent 在完成 KSU 性能模块（SCENE 调度 + AppOpt 线程优化）集成时发现
-- Category: 工作流协作
-- Instructions:
-  - 性能调优入口在设置页 `btnPerformanceTuner`，对应 `PerformanceTunerActivity`；根权限经 `SuSession.getInstance()` 的 open/execute/isSessionOpen 走 Shizuku root 激活。
-  - SCENE 支持 `standalone`（独立模式直接跑 `scene_daemon.sh`，按 `ro.board.platform` 前缀 `mt*/MT*` 判断天玑、其余走 QCOM 分支）与 `scene_dep`（兼容模式，注入 `config8gen3/*` 到 `/data/data/com.omarea.vtools/files`，需已装 Scene 工具箱）双模式，UI 用 RadioGroup 切换。
-  - 部署产物统一放 `/data/adb/HanFengPerf`，子目录 `scene/`、`appopt/`，日志 `scene.log`/`appopt.log`；模块文件从 app 私有目录 `filesDir/perf_staging` 经 `PerfTunerManager.deployAssets()` 中转复制。
-  - AppOpt 仅打包 arm64-v8a 二进制（APK 体积考虑），其他 ABI 跳过线程绑定；`cpu_control.sh` 使用 `function()` 语法（mksh 风格，Android `/system/bin/sh` 为 mksh 可接受，本地 dash 语法检查会误报）。
-  - 默认内置精简 AppOpt 规则模板（约 50 行），不带完整 289KB `applist.prop` 进 APK；UI 保存规则后自动重启对应守护。
-  - 性能调优 UI 采用全屏编辑器而非小对话框：`SceneParamsEditorActivity`（结构化表单分项输入 + 校验 + 恢复默认，SCENE 参数/频率/温度墙一体化编辑）与 `AppOptRulesEditorActivity`（大编辑区 + 实时有效规则统计 + 插入模板 + 恢复默认）；主界面另有"频率/温度墙"与"恢复出厂默认"入口，两个编辑页均需在 AndroidManifest 注册。
-  - 频率/温度墙独立持久化：Repository 新增 `scene_fmax_cap`（默认 auto）与 `scene_thermal`（默认 49500）键；`PerfTunerManager.writeSceneDaemon` 生成守护脚本时独立键优先于自定义参数文本 `fmax_cap`/`thermal_guard`，`restoreDefaultSceneConfig/restoreDefaultAppOptRules` 一键回出厂默认。
-  - Shizuku 官方权限名冲突修复：`shizuku-fork/manager/src/main/AndroidManifest.xml` 不能声明 `<permission android:name="moe.shizuku.manager.permission.API_V23">`（会导致官方 Shizuku APK 安装报 `INSTALL_FAILED_DUPLICATE_PERMISSION`），只保留 `<uses-permission>`；官方权限名的权威定义交给官方 Shizuku APP，未装官方时 fork 走 `com.HanFeng.permission.shizuku.API_V23`，server 端 `ServerConstants.isClientPermissionRequested` 仍同时识别官方权限串。
-
-[设备标识与进程监控修复约定]
-- Date: 2026-08-19
-- Context: Agent 完成 8 项用户问题修复（Root 区、IMEI 双卡槽、放行实时生效、拦截标志、广告拦截增强、进程监控、背景图卡顿/覆盖、免广告领奖励）
-- Category: 故障排查
-- Instructions:
-  - Root 区修复：`DeviceIdModifier.runRootShell` 入口统一在 execute 前 `if (!session.isSessionOpen()) session.open(timeoutSeconds = 30)`，一处覆盖 backup/restore/read/write 所有路径；`SuSession` 单例在 `app/src/main/java/com/HanFeng/adblocker/shizuku/SuSession.kt`。
-  - IMEI 双卡槽：`writeImeiDual(imei1, imei2)` 用 `IMEI_WRITE_PROPS` 里已含的 IMEI2 专属键（gsm.imei2/ril.imei2/persist.sys.imei2）；UI 层 `SettingsActivity` 的 `showModifyImeiDialog` 双输入框 + `executeImeiChange(imei1, imei2)`；IMEI2 留空则回退 `writeImei`。
-  - 放行实时生效：公开 `RuleRepository.clearWhitelistDomainCache()`，`WhitelistActivity.scheduleVpnReload()`（delay 350ms + `NetworkKernel.reloadIfRunning`）在延迟前先清缓存；`cachedWhitelistHits` 上限 500_000。
-  - 进程监控：`RunningAppsActivity` 用 `ProcessMonitor.getInstance` 的 STARTED 生命周期 + `processFlow`/`sampleError` 采集；`ProcessMonitor.isBackingShellAvailable()`（companion，静态判断 Shizuku pingBinder+checkSelfPermission 或 SuSession open）供 UI 判断是否显示授权引导按钮。
-  - `RunningAppsActivity` 是 AppCompatActivity（不是 BaseActivity），Shizuku 授权结果要在 `onRequestPermissionsResult`/`onActivityResult`（requestCode=4096，来自 `ShizukuRepository.REQUEST_CODE`）里 `refreshShellStatus()` 重启采样并隐藏按钮。
-  - 背景图：`CustomVisuals.decodeSampledDrawable(input, maxDimension=1920)` 先 inJustDecodeBounds 测尺寸再按 2 倍 inSampleSize 降采样，避免大图整张解码卡顿；布局里背景 ImageView 用 FrameLayout 包裹原根布局，id 统一 `ivBackground`。
-  - 免广告领奖励：`SettingsActivity.switchAdFreeReward` 开关切换需同步触发 `NetworkKernel.reloadIfRunning(this)` 才即时生效；`AdBlockVpnService.resolveAdFreeRewardProtection`（约 line 1849-1923）负责放行奖励验证域名。
-  - TextView 设置粗体用 `setTypeface(Typeface.DEFAULT, Typeface.BOLD)`，Kotlin 里 `textStyle` 不是属性会编译失败。
-  - 该环境编译命令（PATH 无 gradle）：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ANDROID_HOME=/opt/android-sdk GRADLE_USER_HOME=/opt/gradle-home /opt/toolset/gradle-8.8/bin/gradle :app:assembleDebug -x lint --no-daemon -Dorg.gradle.jvmargs="-Xmx1536m -XX:MaxMetaspaceSize=512m"`；gradle 发行版在 `/opt/toolset/gradle-8.8`。
-
-[性能调优与线程优化重设计]
-- Date: 2026-08-19
-- Context: 用户要求性能调优和线程优化分离，并重做 UI
-- Category: 工作流协作
-- Instructions:
-  - 设置页「性能调优（调度/线程优化）」拆为两个独立按钮：「性能调优（调度参数）」和「线程优化（APP 绑定）」。
-  - 性能调优新增 CPU/GPU 频率监控面板，通过 SuSession 读取 `/sys/devices/system/cpu/cpu*/cpufreq/` 和 `/sys/class/kgsl/kgsl-3d0/gpuclk`，显示每核心实时频率 + 温度，可设置最大频率。
-  - 温度墙显示改为 °C 格式（49.5 而非 49500），输入自动转换 *1000。
-  - 线程优化新建 AppOptAppsActivity，读取所有第三方 APP，列表显示，点进可设置 CPU 亲和性（小核/大核/全部/自定义），规则保存到 PerformanceTunerRepository 的 appopt_rule_text。
-  - Shizuku 权限管理按钮改为直接调用 `ShizukuRepository.requestPermission()` 触发系统授权，不再打开自定义管理页面。ShizukuPermissionManageActivity 保留但不从设置页跳转。
-  - 构建 shell 命令时避免在 Kotlin 字符串中使用 `\$` 转义，改用 `${'$'}` 变量 D 模式，确保 Kotlin 1.9 兼容。
-
-[构建链路重建与 native 阶段 OOM 对策]
-- Date: 2026-09-03
-- Context: Agent 在执行"修复并优化 APP 并提高广告拦截"编译验证时发现（环境重置后 /opt/toolset、SDK、JDK 全部丢失）
-- Category: 环境配置
-- Instructions:
-  - 环境重置后重建顺序：`apt-get update && apt-get install -y openjdk-17-jdk-headless unzip`；Gradle 8.8 用腾讯镜像 `https://mirrors.cloud.tencent.com/gradle/gradle-8.8-bin.zip` 解压到 `/opt/toolset/`；cmdline-tools 用 `commandlinetools-linux-11076708_latest.zip` 移到 `/opt/android-sdk/cmdline-tools/latest`；`sdkmanager --licenses` 后装 `platforms;android-36`、`build-tools;36.1.0`、`platform-tools`。
-  - 构建时 Gradle daemon 会在 `:shizuku-fork:manager` native CMake 阶段因内存被杀（daemon disappeared），对策：background terminal 内存配额提到 62%、加 `-Dorg.gradle.workers.max=2` 限制并行后可完整通过。
-  - Kotlin 编译错误会在 native 阶段之前暴露；日志带 `| tail` 会缓冲到结束才写文件，查进度用 `ls app/build/intermediates` 和 `ps aux | grep GradleDaemon`。
-
-[规则与拦截链路缓存一致性约定]
-- Date: 2026-09-03
-- Context: Agent 在修复"新导入规则不生效/追加后拦截异常"时确认
-- Category: 代码模式
-- Instructions:
-  - 任何规则追加/修改路径必须同步处理 `cachedBloomFilter`（增量 put 或置 null），否则 computeFindMatchingRule 的 Bloom 预筛选会永久否决新域名。
-  - simpleIndex/trie 走增量更新保证导入即时生效；ruleMap/universalRuleMap/cnameRuleIndex/regex/keyword 系列缓存置 null 惰性重建，避免追加态脏读。
-  - `$important` 语义统一为"优先于普通例外"，四处索引构建路径（文件加载/updateRuleCache/rebuildCachesFromRules/内存路径）行为必须一致。
-  - 带路径的 `||domain/path^` 规则禁止在任何 fast path 降级成整域拦截；DNS 层匹配必须跳过 pathPattern/keywordPattern 规则。
-  - SniInterceptor 决策缓存键必须含 appName 与 isProtectedDomain；QUIC/加密 DNS 反绕过判定不得放在 httpDecryptEnabled 门控之内。
-
-[Root 区域设备标识失效根因与修复模式]
-- Date: 2026-09-03
-- Context: 用户反馈 Root 区域仅腾讯游戏防标记和证书安装有效，其余设备标识功能全部失效
-- Category: 排错调试
-- Instructions:
-  - Android 8+ 各 App 读的是按包名隔离的 SSAID（settings_ssaid.xml 中带 package= 的 setting 行），
-    只改全局 secure.android_id 对 App 无效；写入必须同时重写全部 App 级 SSAID 条目，验证也以 SSAID 为准。
-  - prop 伪装（IMEI/SN/序列号/型号）失效根因：RIL/modem 进程重启会从 NV 回读覆盖 prop，
-    模块 service.sh 仅开机跑一次。修复模式 = HanFengPropWatch 守护（/data/adb/HanFengPropWatch/watcher.sh，
-    nohup + watcher.pid 幂等，30 秒周期按 props.list 增量恢复），service.sh 每次写规则时重写并携带守护拉起逻辑。
-  - Kotlin 字符串内 shell 变量统一用 ${'$'} 注入（stripHead/stripTail 模式），禁止 \$ 转义。
-  - 类体内不能声明 private const val（只能 companion object / 顶层）。
-  - 用户确认有效必须保留的功能：腾讯游戏防设备标记、证书安装到系统。
-
-[Shizuku 功能入口主动授权约定]
-- Date: 2026-09-03
-- Context: 用户要求点击 Shizuku 区域功能时主动申请 Shizuku 权限
-- Category: 代码模式
-- Instructions:
-  - 设置页 Shizuku 功能入口统一走 SettingsActivity.requestShizukuThen：未授权主动调
-    ShizukuRepository.requestPermission() 弹系统授权框；binder 不可达先尝试
-    BuiltInShizukuStarter.activateViaRoot() 自动拉起 server 再授权；授权成功经
-    shizukuPermissionListener 预热增强服务后接续原操作（pendingShizukuAction）。
-  - 授权结果监听需在 Activity onCreate 注册 / onDestroy 移除，与 MainActivity 的监听互不冲突（同一 REQUEST_CODE=4096）。
-
-[规则厂商分类与导入链路约定]
-- Date: 2026-09-03
-- Context: 用户反馈导入规则文件后厂商全部归入"其它"
-- Category: 排错调试
-- Instructions:
-  - 流式导入 fast path 的 buildCompactImportedRule 必须按域名 classifyVendorSimple 识别厂商并持久化；
-    规则列表按存储的 vendor 字段分组展示，无运行时重算，硬编码 DEFAULT_VENDOR 会整批归"其它"。
-  - 存量修复走 getRules 加载迁移：vendor==DEFAULT 且为简单域名规则时重算，随 migrated 标记落盘。
-
-[拦截态 DNS 延迟与采样约定]
-- Date: 2026-09-03
-- Context: Agent 在优化"开启拦截后网络延迟"时确认
-- Category: 代码模式
-- Instructions:
-  - Android Q+ TUN 为阻塞读，异步 DNS 应答必须由独立 drain 协程经 tunOutputStream 写出
-    （launchDnsResultDrainer，10ms 周期），依赖主循环"下一个包"带出会滞留到客户端重传（1-5 秒延迟）。
-  - DNS worker 现为双线程（DnsWorker/DnsWorker2），并发消费 dnsTaskIn，慢查询互不阻塞；
-    修改 worker 生命周期时需同步 interrupt 两个线程并取消 drain 协程。
-  - ProcessMonitor 采样按 SamplingMode 维护独立 job（modeJobs map），
-    stopSampling(mode) 只停自己那份，FloatingBallService 停 FOREGROUND_ONLY、进程页停 FULL。
-  - 进程页主线程禁止调 SuSession.open()（同步 fork su 最长 60s ANR），
-    isBackingShellAvailable 只做 findSuBinary 无阻塞探测。
-
-[使用说明维护边界]
-- Date: 2026-09-03
-- Context: 用户要求使用说明只补 Root 区域功能说明
-- Category: 工作流协作
-- Instructions:
-  - GuideActivity.DEFAULT_GUIDE_CONTENT 章节编号固定（一至二十四），用户未要求时不新增/调整章节；
-    Root 区域功能变化只更新"二十四、Root 区域功能说明"章节内容。
-
-[免广告领奖励跨层放行约定]
-- Date: 2026-09-03
-- Context: 用户问"免广告领奖励真的能用吗"，排查发现开关只覆盖 DNS 放行层且判定在规则命中之后
-- Category: 排错调试
-- Instructions:
-  - 奖励放行必须先于规则命中判定贯通四层：DNS sinkhole（processDnsTaskAsync/handleManagedDnsQuery）、
-    SNI（SniInterceptor.evaluate 的 rule-match RST 之前）、QUIC/MITM 决策
-    （resolveDomainDecisionContextForApp 返回非拦截上下文）、MITM 内容层（既有 isAdFreeRewardEnabled 分支）。
-  - 放行判定：reward/incentiv 语义域名；白名单与登录鉴权域名（isWhitelistedDomain/isSensitiveAuthDomain）绝不放行。
-  - 新增任何拦截层（如未来 TCP 53 DNS、QUIC 新分支）时必须同步接入奖励豁免，否则开关又会形同虚设。
-
-[弹窗毛玻璃统一约定]
-- Date: 2026-09-04
-- Context: 用户反馈透明弹窗与界面文字重叠，要求全部弹窗按钮加高斯模糊
-- Category: 代码模式
-- Instructions:
-  - 新弹窗一律经 StableDialog.builder/materialBuilder 创建，show 用 showSafely/showMaterialSafely
-    扩展（内含 FLAG_BLUR_BEHIND + dim 兜底 + 入场动画）；create() 后手动 show 的必须补
-    StableDialog.applyLiquidGlassWindow(dialog)。禁止直接 new AlertDialog.Builder / MaterialAlertDialogBuilder。
-  - 液态玻璃可读性双保险：窗口级真实模糊（Android 12+）+ drawable 高不透明度底色兜底
-    （bg_panel 82-90% 白、bg_button 系列同步）；省电模式系统会拒绝模糊渲染。
-  - 批量正则替换 .show() 时严防误伤 Toast.makeText(...).show()（本轮已踩坑并修复）。
-
-[免广告领奖励与流量卡已删除]
-- Date: 2026-09-04
-- Context: 用户要求删除免广告领奖励和免费领流量卡功能
-- Category: 代码结构
-- Instructions:
-  - 两功能已全量移除（设置开关/四层放行/AdRewardInterceptor 伪造回调/统计/布局按钮/外链），
-    后续增强不要再引用 AdFreeReward/AdReward/TrafficCard/lot-ml 相关符号。
-  - 广告拦截当前为无例外全拦语义，新增拦截层无需再考虑奖励放行分支。
-  - TCP DNS（53/TCP）拦截走 handleTcpDnsPacket：首包 2 字节长度前缀校验 + 命中 RST，
-    与 SNI 拦截同模式，无流重组。
-  - AAAA 抑制用 DnsMessageParser.suppressAAAARecords（RDATA 清零，不物理删除避免压缩指针失效）。
-
-[规则库决策缓存约定]
-- Date: 2026-09-04
-- Context: Agent 做"热路径基准与针对性优化"时发现 dnsBlockDecisionCache 是死代码
-- Category: 性能优化
-- Instructions:
-  - isBlocked 已接入 10 秒 TTL 决策缓存（仅 qType != null 的 DNS 语义调用缓存），
-    缓存键含 domain|qType|app|dPort；规则增删改路径必须继续 clear 该缓存（现有 append/save 链路已覆盖）。
-  - 修改域名判定语义（isBlocked/computeIsBlocked 内部逻辑）时评估是否需要提前失效缓存。
-
-[开源导出规范]
-- Date: 2026-09-04
-- Context: 用户要求整理去除 AI 痕迹的开源源码
-- Category: 工作流协作
-- Instructions:
-  - 开源导出排除项：.git（重建新历史，作者用 Han-Feng666@users.noreply.github.com）、.monkeycode/、
-    .ai-ready/、根目录开发过程 *.md、adb_logcat_full_dir、ProxyPinCA_extracted、*.patch、
-    local.properties、build 产物、CHANGE_TRIGGER.txt。
-  - .gitignore 里的 "# AI Tools" 段与 Node/Python/Flutter 等无关段需替换为 Android 标准模板。
-  - 导出后必须复扫 monkeycode/chaitin/claude/opencode 等关键词（注意 grep 退出码判断，勿用短路误判）。
-  - 开源仓库需配 README.md（功能/构建/架构）与 LICENSE（MIT + shizuku-fork Apache 2.0 第三方声明）。
-  - 首个导出包：/workspace/hanfeng-opensource-v3.1.1.tar.gz（含全新 git 历史，21M 源码 / 4.4M tar）。
-
-[磁贴与冻结列表修复记录]
-- Date: 2026-09-04
-- Context: 用户反馈磁贴移入通知栏即闪退、冻结列表显示 0 个
-- Category: 排错调试
-- Instructions:
-  - TileService/Activity 注册自定义 action 广播必须带 RECEIVER_NOT_EXPORTED/EXPORTED（Android 13+），
-    否则 SecurityException；TileService 崩溃表现为"移入通知栏后 APP 打不开"。
-  - 包启用状态（enabledState/suspended）读取一律以本地 PackageManager 为权威，
-    Shizuku UserService 的 serviceContext 未就绪时返回 DEFAULT 会覆盖真实状态。
-  - 冻结语义 = disabled 或 suspended；解冻需同时 enable + unsuspend。
-  - 沙盒 gradle 增量编译与 Android Studio 结果可能不一致（扩展符号解析差异），
-    用户本地构建成功即以用户为准，勿反复重试沙盒编译。
-
-[VPN 热路径省电机与 DNS 判定约定]
-- Date: 2026-09-15
-- Context: Agent 排查"卡顿+发热"并同步修复"加规则后仍出广告"时发现
-- Category: 性能优化
-- Instructions:
-  - 上游 DNS 必须 UDP 优先，DoH 只在 UDP 失败后并发少量端点回退；DoH 全失败要进入熔断冷却，
-    禁止每次查询都新建 TLS 连接，否则会同时拖高功耗与解析延迟。
-  - DNS 结果消费与 worker 不得用 10ms 级别忙轮询，改用带超时的阻塞 poll（秒级）。
-  - 已建立 TLS 会话的后续记录（0x14/0x15/0x17 或已判定流）必须跳过 SNI 重组拷贝，
-    按 flowKey 标记已判定，集合超限整体清理。
-  - 高频写日志用 ConcurrentHashMap + TTL 限频，禁止跨线程抢锁的 accessOrder LRU。
-  - DNS 响应缓存命中后仍需再过一次 RuleRepository.isBlocked，
-    否则新加规则在 TTL 内不生效；规则/配置变更重建 VPN 时要清 SNI、明文 HTTP、TCP-DNS 流判定缓存。
-  - 网络切换回调（invalidateNetworkDependentCaches）需同时重置 DoH 底层 Network 缓存与熔断时间。
-
-[智能识别（学习引擎）接入拦截与决策页的约定]
-- Date: 2026-09-15
-- Context: Agent 实现"自动识别并拦截未知广告 + 拦截与放行页支持逐条入库"时发现
-- Category: 项目知识（自动识别链路）
-- Instructions:
-  - 学习信号观测必须与 MITM 路由解耦：observe 之前不得用 shouldUseActiveMitmRouting() 提前 return，
-    只有 httpsDecryptIpCache/路由重建才放在该判断之后，否则未装证书的设备完全不会自动识别。
-  - 学习结果必须在 DNS 层被消费（缓存命中快路径与 processDnsTaskAsync 慢路径都要查
-    ScoredBlockCache.isDomainBlocked 并 sinkhole），仅 SniInterceptor 查询会让学习域名继续拿到真实 IP；
-    查询前必须先过白名单/敏感认证/受保护流量例外，命中统计用 StatsRepository.BlockSource.LEARNING_CANDIDATE。
-  - 学习日志行必须保持 "Blocked ... domain=<domain>" 形状，否则「拦截与放行」页的正则解析不到条目。
-  - MitmLearningEngine.prune() 与 ScoredBlockCache.pruneIfNeeded() 必须挂在 maybePruneRouteCaches()
-    周期维护里，学习观测面扩大后否则共享 IP 集合无界增长。
-  - 开关 storage key 沿用 mitm_learning_mode（默认已改为 true），
-    唯一 UI 入口是设置页 switchAutoLearnAd；关闭开关只会停止新增学习条目，已入库规则不受影响。
-  - 用户手工放行某域名时必须同时 ScoredBlockCache.dropDomain()，避免学习缓存继续 sinkhole；
-    逐条/一键入库统一走 ScoredBlockCache.persistDomainToRules / persistLearnedDomainsToRules
-    （内部 RuleRepository.addRule(context, domain, RuleSource.IMPORTED)）。
-
-[DNS 侧行为学习信号（无 MITM 自动识别）约定]
-- Date: 2026-09-15
-- Context: Agent 补强"无证书也能自动识别广告"时确定
-- Category: 项目知识（自动识别链路）
-- Instructions:
-  - 规则命中的域名在建连前就 sinkhole 并 return，拿不到解析 IP；因此 IP↔广告域名映射只能来自
-    "通过 DNS 但未列入规则"的域名 + SNI 侧观测，别指望从被拦查询里取 IP。
-  - DNS 侧新增的两条佐证信号都在 maybeApplyDnsBehaviorSignals：IPv4 聚类（同 IP 上广告基础设施域名
-    ≥ DNS_IP_CLUSTER_MIN_AD_HOSTS）与无厂商归属域名扇出（窗口内 ≥10 个未知域名）；
-    两者都只是 AD_CONTENT_CLUSTER（权重 2、上限 4），必须与 dns-unknown/DGA/TLS 指纹叠加才够阈值 10。
-  - 扇出统计只统计 vendor == VpnConstants.UNKNOWN_VENDOR_LABEL 的域名，避免浏览器与大厂 App 误判；
-    窗口集合有上限（64 域名 / 256 App），超限按时间淘汰，新增结构必须挂进 MitmLearningEngine.prune()。
-  - IPv6 不参与 IP 聚类（前缀共享普遍，误判率高）。
-
-[「拦截与放行」页实时刷新与日志解析约定]
-- Date: 2026-09-15
-- Context: Agent 修复"列表不实时刷新、条目内容看不懂"时确定
-- Category: 项目知识（决策页）
-- Instructions:
-  - LogRepository.getDomainDecisionEntries 是增量解析（decisionParseOffset 记录读取位置，只解析新增行，
-    末尾半行回退等下一轮）；页面每 2 秒调用它，禁止改回整文件重扫（日志上限 8MB，重扫会持续吃 CPU）。
-  - 规则库 overlay 纠正时：若反方向日志已存在就直接复用该条目，禁止刷新 timestamp、禁止重复回写
-    rule-sync 日志，否则条目每轮被顶到列表最前且日志刷屏。
-  - 行点击必须走"域名操作"面板（查看内容 / 切换为拦截放行 / 复制），内容面板要给出规则库现状、
-    厂商归属、命名特征、风险提示、智能识别依据与原始日志，用户据此判断该拦还是该放。
+[版本号要求]
+- Date: 2026-06-13 起多次更新（最新 2026-09-30）
+- Context: 用户多次调整版本号并要求同步展示
+- Instructions:
+  - 版本号按修改次数递进，补丁位逢十进一（如 2.6.9 → 2.6.10 → 2.7.0）；同步提升 versionCode。
+  - 版本展示位置保持一致：build.gradle.kts、首页版本文案、规则源请求 User-Agent。
+  - 当前版本：3.2.2 (322)。
+
+[广告拦截总方针]
+- Date: 2026-04-24 起多轮更新
+- Context: 用户长期要求增强广告拦截并保持稳定流畅
+- Instructions:
+  - 稳定性优先：保守实现，避免误杀主业务流量；白名单/敏感鉴权/媒体/业务/游戏/社交核心域名保护放行。
+  - 只拦明确广告流量（广告域名/路径/物料/SDK/跳转信号）；普通业务接口、正文、登录鉴权、支付、媒体内容直通。
+  - 对齐并超越 AdGuard：规则语义兼容、协议覆盖、HTTPS MITM 成熟度、App 级识别、误伤控制持续增强；每轮尽量落成可测试小步改动。
+  - 充分利用已有能力：VPN、HTTP decrypt、QUERY_ALL_PACKAGES、Shizuku（连接归属识别 → 热路径决策，只对高风险应用启用更积极拦截）。
+  - MITM 开启后可积极（全流量全路由接管、深度检查），但保留证书门槛、普通联网 passthrough、熔断回退，目标是提覆盖同时不断网。
+  - 开 HTTP 解密时性能优先：只对命中动态解密目标/广告厂商/广告特征路径的流量深度处理，普通请求直通。
+  - QUIC：MITM 开启时全量阻断强制回 TCP（对齐 AdGuard）；未开启时保守精细判定，正常业务 UDP/443 优先放行。
+  - 加密 DNS 反绕过：DoH/DoQ/DoT/HTTPDNS 域名 + 公共 DNS IP 黑名单，最小接管（只给黑名单 CIDR 加 VPN route，命中静默丢弃）。
+  - 小说类 App 广告（开屏/Banner/章节插屏/原生/弹窗/任务中心/退出挽留）优先拦截；强拦只对已识别小说应用生效，排除主业务域。
+  - 当前阶段不做无障碍自动跳过（李跳跳类功能）。
+  - 低耗电低后台占用：高频热路径用内存缓存，收敛后台周期任务；拦截关闭后不留自启动或后台驻留。
+  - 免广告领奖励与免费领流量卡功能已全量删除（设置开关/四层放行/AdRewardInterceptor/统计/布局/外链），后续增强不得引用 AdFreeReward/AdReward/TrafficCard/lot-ml 符号；当前为无例外全拦语义，新增拦截层无需考虑奖励放行分支。
+
+[规则导入与管理]
+- Date: 2026-06-14 起多轮更新
+- Context: 用户对规则导入稳定性、兼容性、管理体验的持续要求
+- Instructions:
+  - 导入稳定性优先：无论规则多大都快速、不卡死、不崩溃；流式读写；先落可直接拦截的域名规则，后台分批分析复杂语义；单批失败保留已导入结果；导入阶段不做全量去重（交给清理功能）。
+  - 只提取"明确域名型"规则；keyword/regex/path/ip-cidr/逻辑组合规则不降级整域拦截，记为 unsupported/complex 样本；带路径的 ||domain/path^ 禁止在任何 fast path 降级；DNS 层匹配跳过 pathPattern/keywordPattern。
+  - AdGuard DNS 兼容边界：dnstype=/important/match-case/badfilter 可落地；domain=/app=/denyallow=/third-party=/redirect= 等上下文修饰符保持不支持；$important 语义 = 优先于普通例外，四处索引构建路径行为一致；VPN 命中按真实 DNS qType 匹配。
+  - 兼容格式：Hosts（一行多域名）、DOMAIN-SUFFIX/DOMAIN、HOST-SUFFIX/HOST、dnsmasq server=/local=、ipset=/nftset=、行尾注释、hostname/domain 别名变体。
+  - 规则源默认空列表，用户手动添加；不自动注入内置源；规则源可删除；同步后疑似正常规则先逐条展示理由、用户确认后才删。
+  - 统计口径："规则总数" = 真实参与拦截的 supported rules；暂不支持规则单独统计与清理。
+  - 流式导入 fast path 必须 classifyVendorSimple 识别厂商并持久化，禁止硬编码 DEFAULT_VENDOR；存量 vendor==DEFAULT 简单域名规则随加载迁移重算；厂商名称统一"中文名 (国际名)"，normalizeVendorName 支持链式别名归一化。
+  - 缓存一致性：规则追加必须同步处理 cachedBloomFilter（增量 put 或置 null），否则 Bloom 预筛选永久否决新域名；simpleIndex/trie 增量更新，ruleMap/universalRuleMap/cnameRuleIndex/regex/keyword 置 null 惰性重建。
+  - DNS 决策缓存 TTL 60s（RuleRepository.DECISION_TTL_MS）；规则增删改路径必须 clear；修改判定语义时评估提前失效；save/append 已覆盖。
+  - 规则页输入框支持批量粘贴多条域名一次性添加，复用安全解析。
+  - 可疑域名观测：样本记录域名/次数/最近应用名/厂商/小说命中次数并节流写入；页面支持搜索、批量添加、只看已添加/只看未添加（互斥）、小说专项筛选；批量添加后刷新规则页。
+  - "筛选非广告规则"点击必须弹窗逐条展示 + 勾选删除；规则页摘要显示内置/导入/手动/暂不支持计数。
+
+[界面视觉与交互约定]
+- Date: 2026-04-22 起多轮更新
+- Context: 用户对视觉、布局、交互的多轮要求
+- Instructions:
+  - 所有按钮/控件/卡片/弹窗统一白色半透明底（与规则列表容器同源 bg_panel/hf_surface，约 50% 不透明度），浅黑细边框、圆角、深灰文字；主题层防止系统默认样式覆盖成深色。
+  - 沉浸式状态栏：背景图延伸到状态栏，控件本身避开状态栏保持安全间距；首页三主控件尺寸不变、位置整体下移。
+  - 三页（首页/规则/统计）独立背景图从 app/src/main/assets/custom/ 读取：home_background、rules_background、stats_background；主容器只留 ViewPager2，不加总背景/遮罩；大图用 CustomVisuals.decodeSampledDrawable（maxDimension=1920）降采样防卡顿。
+  - 排行榜前三奖牌图标 assets/custom/：medal_gold、medal_silver、medal_bronze；缺失时回退数字名次；应用图标保留自定义资源入口。
+  - 主界面标题"寒枫"；应用名"寒枫 · 广告拦截"；包名 com.HanFeng。
+  - 排行榜紧凑：默认前五，"查看完整榜单"弹窗展示完整；应用排行只显示名次/应用名/数量（不显示包名）；未知应用靠缓存与回退识别尽量替换真实应用名；厂商识别用规则分组结果优先、域名关键字兜底 + 关键词命中能力。
+  - 已删除页面翻页动画，保证左右滑动稳定；开拦截后主按钮文案切换"停止拦截"；所有按钮有稳定点击反馈。
+  - 弹窗一律 StableDialog.builder/materialBuilder + showSafely/showMaterialSafely（FLAG_BLUR_BEHIND + dim 兜底 + 入场动画）；create() 后手动 show 的必须补 applyLiquidGlassWindow；禁止直接 new AlertDialog.Builder/MaterialAlertDialogBuilder；批量替换 .show() 时严防误伤 Toast；省电模式系统会拒绝模糊渲染。
+  - 应用列表加载放后台线程 + 进度圈；图标异步加载；RecyclerView 避免耗时渲染；TextView 粗体用 setTypeface(Typeface.DEFAULT, BOLD)。
+  - 外链：QQ 群按钮群号 573309536；规则下载按钮先复制密码 aehi 再打开 https://hanfengnb.lanzoul.com/b0j1elsrg。
+  - 白名单逻辑：默认全部应用受拦截，加入白名单的应用完全放行。
+  - 无明确要求时不改动现有界面布局与功能入口。
+
+[拦截链路与性能技术约定]
+- Date: 2026-09-03 起多轮确认
+- Context: Agent 在 DNS 延迟、耗电、学习引擎、决策页等优化中确认
+- Instructions:
+  - 拦截态 DNS 延迟：Android Q+ TUN 阻塞读，异步 DNS 应答必须由独立 drain 协程（launchDnsResultDrainer，10ms 周期）经 tunOutputStream 写出；DNS worker 双线程并发消费 dnsTaskIn；改生命周期需同步 interrupt 两线程并取消 drain 协程。
+  - 耗电：上游 DNS UDP 优先，DoH 仅 UDP 失败后并发少量端点回退，全失败进熔断冷却，禁止每次查询新建 TLS；DNS 结果消费用带超时阻塞 poll（秒级），禁 10ms 忙轮询；已判定 TLS 流（0x14/0x15/0x17）跳过 SNI 重组拷贝，集合超限整体清理；高频日志用 ConcurrentHashMap + TTL 限频，禁跨线程抢锁 LRU。
+  - DNS 响应缓存命中后仍需再过 RuleRepository.isBlocked，否则新规则在 TTL 内不生效；规则/配置变更重建 VPN 时清 SNI、明文 HTTP、TCP-DNS 流判定缓存；网络切换回调（invalidateNetworkDependentCaches）重置 DoH Network 缓存与熔断时间。
+  - SNI 拦截与 MITM 解耦：shouldBlockBySniWithoutMitm 在 httpDecryptEnabled=false 时独立运行（只看 TLS ClientHello 明文 SNI，发 RST，对证书绑定 App 也有效）；SniInterceptor.evaluate 零 MITM 依赖（RuleRepository + ScoredBlockCache + isProtectedTrafficDomain）；QUIC/加密 DNS 反绕过判定不得放在 httpDecryptEnabled 门控内；同域名不同路径的内容级广告（如 api.xxx.com/comment/list）只能靠 MITM 内容层 HttpMitmFilter。
+  - TCP DNS（53/TCP）拦截走 handleTcpDnsPacket：首包 2 字节长度前缀校验 + 命中 RST；AAAA 抑制用 suppressAAAARecords（RDATA 清零，不物理删除避免压缩指针失效）。
+  - 学习引擎：观测必须与 MITM 路由解耦（observe 之前不得 shouldUseActiveMitmRouting() 提前 return，否则未装证书设备完全不会自动识别）；学习结果必须在 DNS 层被消费（快慢路径都查 ScoredBlockCache.isDomainBlocked 并 sinkhole），查询前过白名单/敏感认证/受保护流量例外；开关 key mitm_learning_mode 默认 true，UI 入口 switchAutoLearnAd，关闭只停新增。
+  - DNS 侧学习信号（maybeApplyDnsBehaviorSignals）：IPv4 聚类（同 IP 广告基础设施域名 ≥ DNS_IP_CLUSTER_MIN_AD_HOSTS）+ 未知域名扇出（窗口 ≥10），都是 AD_CONTENT_CLUSTER（权重 2 上限 4），需叠加才够阈值 10；扇出只统计 vendor==UNKNOWN 域名；IPv6 不参与聚类；窗口/集合有上限（64 域名/256 App），新增结构挂进 MitmLearningEngine.prune()。
+  - 学习日志行必须保持 "Blocked ... domain=<domain>" 形状（决策页正则依赖）；LogRepository.getDomainDecisionEntries 增量解析（decisionParseOffset），页面 2 秒轮询，禁整文件重扫（日志上限 8MB）；overlay 纠正复用已有条目，禁刷 timestamp/重复回写；行点击走"域名操作"面板（内容/切换拦截放行/复制），内容面板给出规则库现状/厂商/特征/风险/学习依据/原始日志。
+  - 用户手工放行域名必须同时 ScoredBlockCache.dropDomain()；入库走 persistDomainToRules/persistLearnedDomainsToRules（内部 addRule IMPORTED）。
+  - 上游 DNS 过滤本地虚拟地址（10.99.0.2、fd66:66::2）防回环，系统 DNS 不可用回退公共 DNS；IPv6 本地 DNS 判断先做 InetAddress 标准化；上游失败回 SERVFAIL，被拦域名对非 A/AAAA 也回合法响应；上游健康退避（失败次数/冷却/最近成功）+ 陈旧缓存仅全失败时兜底。
+  - 放行实时生效：RuleRepository.clearWhitelistDomainCache() + WhitelistActivity.scheduleVpnReload（delay 350ms + NetworkKernel.reloadIfRunning），cachedWhitelistHits 上限 500_000。
+  - VPN/HTTP/HTTPS 决策统一生成 reason 字段供日志面板复用，避免各写一套文案。
+  - 排行榜详情在页面内重新读取统计，禁大字符串 Intent 传完整榜单；统计持久化 map 需裁剪上限；统计数据拦截事件后及时刷新 UI。
+
+[Root 区域与设备标识]
+- Date: 2026-07-11 起多轮确认
+- Context: Root 功能集成与修复中确认的模式
+- Instructions:
+  - SuSession API：getInstance()/open(timeoutSeconds)/execute(command, timeoutSeconds)→ShellResult(exitCode, output)/isSessionOpen()；单例在 com.HanFeng.adblocker.shizuku.SuSession；内联命令不得含 exit。
+  - 长期守护任务遵循"JVM 仅作 launcher"：SuSession 拼 watcher.sh 写 /data/adb/<FeatureName>/（watcher.sh/watcher.pid/watcher.log），nohup sh 启动，PID 写 .pid；JVM 重启后 kill -0 $(cat pid) 判断守护存活；禁 JVM 内 while(true) 轮询。
+  - Kotlin 字符串内 shell 变量统一用 ${'$'} 注入，禁 \$ 转义（早期 \$ 写法已被取代）。
+  - Android 8+ Android ID 是按包名隔离的 SSAID（settings_ssaid.xml 带 package= 的行），只改全局 secure.android_id 无效；必须重写全部 App 级 SSAID 条目并以 SSAID 验证。
+  - prop 伪装失效根因：RIL/modem 重启从 NV 回读覆盖 prop，模块 service.sh 只开机跑一次；修复 = HanFengPropWatch 守护（/data/adb/HanFengPropWatch/watcher.sh，nohup + pid 幂等，30 秒周期按 props.list 增量恢复）+ service.sh 重写规则并拉起守护。
+  - 主板 ID = SoC 平台代号（prop 优先级：ro.board.platform > ro.boot.board.platform > ro.board.hardware > ro.hardware > ro.boot.hardware > ro.soc.model），校验 ^[a-z0-9._\-]+$；随机生成从真实 SoC 代号表选；SN 码与设备序列号不同源（2026-10-04 修正）：拨号盘 *#06# SN 行由 gsm.sn/persist.sys.sn/ril.sn 等驱动，ro.serialno/ro.boot.serialno/persist.sys.serialno 承载设备序列号，SN 读取/预填只从 SN prop 组 + EFS 取，序列号单独标注展示；IMEI 双卡槽 writeImeiDual 用 IMEI2 专属键（gsm.imei2/ril.imei2/persist.sys.imei2），IMEI2 留空回退 writeImei。
+  - DeviceIdModifier.runRootShell 统一入口：execute 前 isSessionOpen 检查 + open(timeoutSeconds=30)，覆盖 backup/restore/read/write 全路径。
+  - prop 持久化双根因（2026-10-04 修复，勿回退）：HyperOS/toybox 无 awk，props.list upsert 用 awk 临时文件会塌陷成只剩最后一条 → 必须用 sed（sed -i '/^key=/d' + printf 追加，key 含 . 要转义）；模块目录内 post-fs-data.d/service.d 子目录 Magisk/KSU/APatch 均不执行，zygote 前应用 ro.* 必须写全局 /data/adb/{post-fs-data.d,service.d}；service.sh 的 `[ -r "$PL" ]` 括号前空格缺失会让脚本首行 exit（shell 测试空格是语法）。
+  - EFS 提取增强：IMEI 用 14-17 位数字段滑 15 窗 Luhn 校验（modem NV 常嵌在更长数字串）；提取失败时附 efsDiagnostics()（分区 MISSING/DENIED/OK + getenforce + strings 存在性），"无法读取"必须有原因。
+  - API 层伪装（内置 Xposed/LSPosed 模块，LSPosed 即 Zygisk hook）：hook 类 com.HanFeng.xposed.HanFengSpoofHook（assets/xposed_init + manifest xposedmodule meta-data）；hook TelephonyManager.getImei/getMeid/getDeviceId（含 int 变体按 slot 匹配）+ Build.getSerial/SERIAL；配置 /data/local/tmp/hf_spoof.conf（644，App 可读；/data/adb 对 App 进程不可读不可用）；Xposed 桩必须用 Java 类（Kotlin object 调用点生成 INSTANCE 字段访问会 NoSuchFieldError），桩方法描述符与 API 82 精确一致（findAndHookMethod 返回 void），桩依赖父优先委托运行时被 LSPosed 真实实现取代。
+  - MEID 正则只匹配带 meid/mMeid 标签的行（telephony.registry 兜底与 RIL 汇总均是），防 dumpsys 任意 14 位 hex 误匹配（2026-09-30 修复）。
+  - 用户确认有效必须保留：腾讯游戏防设备标记、证书安装到系统。
+  - 性能调优：设置页 btnPerformanceTuner → PerformanceTunerActivity；SCENE standalone/scene_dep 双模式（RadioGroup 切换，按 ro.board.platform 前缀 mt*/MT* 判天玑）；部署产物 /data/adb/HanFengPerf（scene/、appopt/，日志 scene.log/appopt.log），模块经 filesDir/perf_staging 中转复制；AppOpt 仅 arm64-v8a；cpu_control.sh 用 mksh 风格 function() 语法（本地 dash 检查会误报）；默认精简 AppOpt 模板（约 50 行），不带完整 289KB applist.prop；SceneParamsEditorActivity/AppOptRulesEditorActivity 全屏编辑器需 Manifest 注册；scene_fmax_cap（默认 auto）/scene_thermal（默认 49500，UI 显示 °C、输入 *1000）独立持久化键，restoreDefault* 一键回默认；CPU/GPU 频率监控读 /sys/devices/system/cpu/cpu*/cpufreq/ 与 /sys/class/kgsl/kgsl-3d0/gpuclk。
+
+[Shizuku 集成与授权约定]
+- Date: 2026-07-18 起多轮更新（最新 2026-09-30 重构）
+- Context: Shizuku fork 内置、授权流程、区域重构
+- Instructions:
+  - shizuku-fork 子工程 11 个 Gradle module（aidl/shared/common/api/provider/server-shared/rish/starter/server/manager）全部内置主 APK（lib/<abi>/libshizuku.so、librish.so、libadb.so × 4 ABI）；客户端 SDK 仍用 dev.rikka.shizuku:api:13.1.5（A 路线，只内置 starter）。
+  - BuiltInShizukuStarter.init(context) 保存 context；activateViaRoot 从自身 nativeLibraryDir/libshizuku.so 以 root shell 启动 server；SERVER_NAME=hanfeng_shizuku_server（stop 时 pkill -f + rm /dev/socket）。
+  - License 第 6 条字符串约束：applicationId=com.HanFeng.shizuku、permission=com.HanFeng.permission.shizuku.*、extra prefix=com.HanFeng.shizuku.intent.extra.*、REQUEST_PERMISSION action 同前缀；禁用 moe.shizuku.privileged.api / moe.shizuku.manager.permission.*；Java 内部包名 moe.shizuku.*/rikka.shizuku.* 保留。
+  - fork:manager 不得声明 moe.shizuku.manager.permission.API_V23（否则官方 Shizuku 安装报 INSTALL_FAILED_DUPLICATE_PERMISSION），只保留 uses-permission；server 端 isClientPermissionRequested 同时识别官方权限串。
+  - 主 app 强制 androidx.core 1.13.1（resolutionStrategy.force），否则 fork:manager 拉 1.16.0 与 AGP 8.5.0 不兼容。
+  - fork:aidl 必须 buildFeatures.aidl=true；子 modules plugin 版本集中在 settings.gradle.kts pluginManagement；NDK 26.1.10909125，cmake 3.22.1（CMakeLists 降到 3.22）。
+  - 设置页 Shizuku 入口统一 requestShizukuThen：未授权主动 ShizukuRepository.requestPermission()；binder 不可达先 BuiltInShizukuStarter.activateViaRoot() 自动拉起 server；授权成功预热增强服务后接续 pendingShizukuAction；监听 onCreate 注册/onDestroy 移除（REQUEST_CODE=4096，与 MainActivity 同码不冲突）。
+  - 就绪检查统一流程：预热 user service → 检查 connection owner/ad control 存活 → 再给不可用提示；Binder 可达但权限异常时参考增强服务是否存活决定"兼容模式可用"或"增强服务尚未就绪"。
+  - 2026-09-30 重构：ShizukuServiceBinder<T> 基类统一绑定状态机（AdControl/ConnectionOwner 两 Repository object 继承，getService 主线程 200ms 快速失败、isReady public、ensureBoundAndWait AdControl 侧带 checkServiceHealth 兜底）；删除死代码（ShizukuHostsModifier/ShizukuBackgroundRestrictor/ShizukuNetworkPermissionController/RootScriptExecutor 四文件 + ShizukuHideManager 死方法/死常量）；ShizukuPermissionManageActivity 已恢复设置页入口 btnShizukuPermission（此前"不从设置页跳转"的约定已失效）；应用列表逻辑提取到 ShizukuAppListController。
+  - 无线调试配对"发送没反应"根因（2026-10-04 修复，勿回退）：shizuku-fork 的 AdbPairingClient/AdbClient 用 `Socket(host, port)` 无连接超时、TLS 握手无 soTimeout → 配对端口失效（HyperOS 每次开配对弹窗端口会变）时阻塞挂死，`pairing=true` 永久卡住吞掉后续点击。修复 = connect 5s + soTimeout 10s（阻塞 IO 协程取消不了，必须 OS 级超时）+ WirelessDebugFloatingService.pairAndActivate 外层 withTimeoutOrNull(45s) 兜底 + 失败重扫 mDNS；root 激活点击即给 toast 反馈，失败走 showActivationFailureDialog。
+
+[外设管理与已删除功能]
+- Date: 2026-09-30 起多轮确认（最新 2026-10-04）
+- Context: 外设管理功能完成与多项功能删除
+- Instructions:
+  - 散热器：BLE + CoolerProtocol 接口隔离（红魔/黑鲨/通用透传各自实现）；功率 0-100 为风扇档位（PWM 占空比），固件联动调 TEC 电流 + 风扇转速，单档位行为与官方 App 一致；CoolAutoTuner 纯迟滞门控（HYSTERESIS_CELSIUS=3.0）；一键散热模式自动关闭智能温控；ANC 状态诚实呈现，不伪造成功。
+  - 兼容未知散热器（派威=Piva 无公开协议）：扫描候选全保留排序（已知协议→关键词→其余），可写特征放宽到 WRITE|WRITE_NO_RESPONSE，订阅所有可通知特征，UI 提供红魔/黑鲨/ASCII 三协议试探按钮（sendRaw + hex 回显），设备有响应后再固化协议。
+  - 蓝牙耳机 ANC 适配表：小米/Redmi 关键词（REDMI/XIAOMI/小米/MI BUDS）必须排在三星前，三星匹配限 GALAXY BUDS/BUDS（裸 BUDS 会抢匹配 Redmi Buds 误判）；小米/Redmi 无公开 ANC GATT 协议，仅记录偏好+引导厂商 App。
+  - keybox 功能已删除（市面成熟方案如 TickyStore 存在）；蓝牙耳机低电量提醒已删除（耳机/手机自带）；免广告领奖励/免费领流量卡已删除（见广告拦截总方针）。
+
+[构建环境]
+- Date: 2026-09-29 起多次重建确认
+- Context: 构建环境重置与重建经验
+- Instructions:
+  - 依赖 Android SDK：local.properties 写 sdk.dir=/opt/android-sdk（或 ANDROID_HOME）；JDK 17（Debian bookworm 用 apt-get install -y default-jdk-headless，没有 openjdk-17-jdk-headless 包名）。
+  - 工作区缺 gradle-wrapper.jar，./gradlew 必然失败（Could not find GradleWrapperMain）；用发行版 bin/gradle（Gradle 8.8，历史路径 /tmp/opencode/gradle-8.8 或 /opt/toolset/gradle-8.8；重置后从腾讯镜像 https://mirrors.cloud.tencent.com/gradle/gradle-8.8-bin.zip 重下）。
+  - 环境重置重建顺序：JDK → gradle 解压 → cmdline-tools 移 /opt/android-sdk/cmdline-tools/latest → yes | sdkmanager --licenses → sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.x" → local.properties。
+  - 内存受限参数：--no-daemon -Dorg.gradle.jvmargs='-Xmx1100m -XX:MaxMetaspaceSize=384m' -Dkotlin.compiler.execution.strategy=in-process（gradle.properties 默认 4G+4G 堆会 OOM）；native CMake 阶段 daemon 被杀 → 加 -Dorg.gradle.workers.max=2 + background terminal memory_percent 兜底。
+  - 构建任务必须用 background terminal（先 list 再 create）；Kotlin daemon 偶发 NoSuchObjectException: no such object in table 会自动回退重试，重跑即可。
+  - :app 依赖 :shizuku-fork:*，首次构建自动下载 NDK 26.1.10909125（约 2G、16 分钟+），装好后增量编译几分钟；需联网解析 AGP 8.5.0。
+  - Kotlin 编译错误在 native 阶段前暴露；日志带 | tail 会缓冲到结束，查进度用 ls app/build/intermediates 和 ps aux | grep GradleDaemon。
+  - Kotlin 语法要点：object 可继承泛型基类（object X : Base<T>()）；inner class 不能有 companion object（DIFF 引用 unresolved），嵌套 Adapter 用 nested class；com.HanFeng.ui 包内文件需 import com.HanFeng.R；类体内不能声明 private const val（只能 companion/顶层）。
+  - 沙盒增量编译与 Android Studio 结果可能不一致（扩展符号解析差异）；用户本地构建成功以用户为准，勿反复重试沙盒编译。
+  - 测试：JVM 单测不 mock Android（相关依赖 stub/flag 关闭）；测试目录 app/src/test/java/com/hanfeng/adblocker/**（package 用 com.HanFeng.*，目录与包名不一致是既有约定）；当前 280 测试全绿。
+
+[项目基础事实]
+- Date: 2026-04-22 起累积
+- Context: 项目初始化与历史约定
+- Instructions:
+  - 单模块 app/ + shizuku-fork 子工程；Kotlin + XML + ViewPager2 三屏；minSdk 24，兼容 Android 7–16；V1/V2/V3 三种签名方案。
+  - VPN 仅接管本地 DNS 地址与常见 DoT 目标路由（最小接管架构）；POST_NOTIFICATIONS 在开 VPN 前运行时申请；VPN 线程降优先级 + 阻塞模式防空转；白名单变更后需重载 AdBlockVpnService。
+  - 首次启动只申请真正需要的标准运行时权限；应用列表被系统额外限制时弹窗引导去系统设置手动允许。
+  - 组件治理：SettingsActivity 按 splash/push/recommend/ad 关键词给 Activity/Receiver/Service 打分展示候选，操作格式 package/class（pm disable-user/pm enable）。
+  - 磁贴/冻结：TileService/Activity 注册自定义 action 广播必须带 RECEIVER_NOT_EXPORTED/EXPORTED（Android 13+），否则 SecurityException 且表现为"APP 打不开"；包启用状态（enabledState/suspended）以本地 PackageManager 为权威（Shizuku serviceContext 未就绪返回 DEFAULT 会覆盖真实状态）；冻结语义 = disabled 或 suspended，解冻需 enable + unsuspend。
+  - 进程监控：ProcessMonitor STARTED 生命周期 + processFlow/sampleError 采集；SamplingMode 维护独立 job（modeJobs map），stopSampling(mode) 只停自己；进程页主线程禁 SuSession.open()（fork su 最长 60s ANR），isBackingShellAvailable 只做 findSuBinary 无阻塞探测；RunningAppsActivity 是 AppCompatActivity，授权结果在 onRequestPermissionsResult/onActivityResult（requestCode=4096）里 refreshShellStatus()。
+  - 使用说明：GuideActivity.DEFAULT_GUIDE_CONTENT 章节编号固定（一至二十四），用户未要求不新增/调整章节；Root 区域变化只更新"二十四、Root 区域功能说明"。
+  - 日志导出：下载目录固定文件名，每次覆盖并清理同名旧副本。
+  - 开源导出：排除 .git（重建新历史，作者 Han-Feng666@users.noreply.github.com）、.monkeycode/、.ai-ready/、根目录开发过程 *.md、adb_logcat_full_dir、ProxyPinCA_extracted、*.patch、local.properties、build 产物、CHANGE_TRIGGER.txt；.gitignore 的 "# AI Tools" 段替换为 Android 标准模板；导出后复扫 monkeycode/chaitin/claude/opencode 关键词（注意 grep 退出码判断）；README（功能/构建/架构）+ LICENSE（MIT + shizuku-fork Apache 2.0 声明）；首个导出包 /workspace/hanfeng-opensource-v3.1.1.tar.gz。

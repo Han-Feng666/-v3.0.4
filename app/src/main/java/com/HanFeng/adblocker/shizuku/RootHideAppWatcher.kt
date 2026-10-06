@@ -109,7 +109,7 @@ object RootHideAppWatcher {
         val startRes = suSession.execute(
             "nohup sh '$WATCHER_SCRIPT_FILE' >/data/adb/hanfeng/watcher.log 2>&1 &\n" +
                 "echo \$! > '$WATCHER_PID_FILE'\n" +
-                "sleep 0.3 && cat '$WATCHER_PID_FILE' && echo STARTED", 8
+                "sleep 1 && cat '$WATCHER_PID_FILE' && echo STARTED", 8
         )
         val started = startRes.output.contains("STARTED")
         running.set(started)

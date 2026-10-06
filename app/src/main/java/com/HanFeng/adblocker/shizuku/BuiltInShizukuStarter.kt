@@ -87,21 +87,49 @@ object BuiltInShizukuStarter {
         val out = result.output.trim()
         Log.d(TAG, "root activation exitCode=${result.exitCode} out=$out")
 
-        // 官方判据: starter 输出 "info: shizuku_starter exit with 0" 表示 starter 已 fork 子进程去拉 server 成功.
-        // 不依赖 binder ping - binder 异步推回由 ShizukuProvider 接收, UI 层会订阅 binder received listener.
+        // 官方判据: starter 输出 "info: shizuku_starter exit with 0" 表示 starter 已 fork 子进程去拉 server.
+        // 但这只代表 fork 成功, server 子进程可能随即崩溃 (SELinux/app_process 异常),
+        // 之前只看 starter 输出会"报成功但实际没激活"。必须等 binder 真正推回才算激活。
         val starterOk = out.contains("info: shizuku_starter exit with 0", ignoreCase = true)
                 || out.contains("info: shizuku_server pid is", ignoreCase = true)
 
-        return if (starterOk) {
+        if (!starterOk) {
+            return ActivationResult(false, "root", buildString {
+                append("starter 输出:\n")
+                append(out.take(800))
+            })
+        }
+
+        // 第二阶段验证: 轮询 binder 推回 (最长 12s)。pingBinder 为真 = server 进程存活且 binder 可用。
+        var pinged = false
+        val deadline = android.os.SystemClock.elapsedRealtime() + 12_000L
+        while (android.os.SystemClock.elapsedRealtime() < deadline) {
+            if (rikka.shizuku.Shizuku.pingBinder()) {
+                pinged = true
+                break
+            }
+            try { Thread.sleep(600) } catch (_: InterruptedException) { break }
+        }
+
+        return if (pinged) {
             ActivationResult(true, "root", buildString {
-                append("已通过 Root 内置 starter 启动 Shizuku 服务\n\n")
+                append("已通过 Root 内置 starter 启动 Shizuku 服务 (binder 已确认)\n\n")
                 append("starter 输出:\n")
                 append(out.take(400))
             })
         } else {
+            // 收集失败现场: server 进程是否还在 + starter stderr
+            val procChk = runCatching {
+                su.execute("pgrep -af hanfeng_shizuku_server 2>/dev/null | grep -v 'pgrep -af'", 3).output.trim()
+            }.getOrDefault("")
+            val starterErr = runCatching {
+                su.execute("cat /data/local/tmp/hanfeng_shizuku_starter.err 2>/dev/null", 3).output.trim()
+            }.getOrDefault("")
             ActivationResult(false, "root", buildString {
-                append("starter 输出:\n")
-                append(out.take(800))
+                append("starter fork 成功但 server 未能存活 (12s 内 binder 未推回)。\n\n")
+                append("starter 输出:\n").append(out.take(400)).append("\n\n")
+                append("server 进程: ").append(procChk.ifBlank { "(已退出)" }).append("\n\n")
+                append("starter stderr:\n").append(starterErr.take(600).ifBlank { "(空)" })
             })
         }
     }

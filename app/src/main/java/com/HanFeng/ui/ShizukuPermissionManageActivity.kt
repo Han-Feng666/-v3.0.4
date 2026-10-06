@@ -23,14 +23,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.HanFeng.R
 import com.HanFeng.adblocker.shizuku.BuiltInShizukuStarter
-import com.HanFeng.data.AuthorizedApp
 import com.HanFeng.data.ShizukuAuthorizationRepository
+import com.HanFeng.data.ShizukuFlags
 import com.HanFeng.data.ShizukuRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -60,6 +58,8 @@ class ShizukuPermissionManageActivity : BaseActivity() {
     private lateinit var appList: RecyclerView
     private lateinit var loadingOverlay: android.widget.ProgressBar
     private lateinit var searchInput: android.widget.EditText
+    private lateinit var btnStopShizuku: android.widget.Button
+    private lateinit var cbAuthorizedOnly: android.widget.CheckBox
 
     private var statusRefreshJob: Job? = null
     private var wirelessDebugMonitorJob: Job? = null
@@ -77,9 +77,19 @@ class ShizukuPermissionManageActivity : BaseActivity() {
         }
     }
 
-    private val appListAdapter = AppListAdapter()
-    private var allApps = mutableListOf<AppItem>()
-    private var filteredApps = mutableListOf<AppItem>()
+    // 注意: packageManager/packageName 依赖 baseContext, field initializer 在 attachBaseContext 前执行会闪退,
+    // 必须用 lazy 延迟到 onCreate 内首次访问
+    private val appListController by lazy {
+        ShizukuAppListController(
+            packageManager = packageManager,
+            selfPackageName = packageName,
+            isShizukuAlive = { ShizukuAuthorizationRepository.isServerAlive() },
+            isSelfAuthorized = {
+                runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
+            },
+            onItemCheckedChanged = { app, isChecked -> applyAuthorizationChange(app, isChecked) }
+        )
+    }
 
     /** 用于 Android 13+ 请求 POST_NOTIFICATIONS 权限的 launcher */
     private val notificationPermissionLauncher =
@@ -232,9 +242,11 @@ class ShizukuPermissionManageActivity : BaseActivity() {
         appList = findViewById(R.id.appList)
         loadingOverlay = findViewById(R.id.loadingOverlay)
         searchInput = findViewById(R.id.searchInput)
+        btnStopShizuku = findViewById(R.id.btnStopShizuku)
+        cbAuthorizedOnly = findViewById(R.id.cbAuthorizedOnly)
 
         appList.layoutManager = LinearLayoutManager(this)
-        appList.adapter = appListAdapter
+        appList.adapter = appListController.adapter
 
         findViewById<android.widget.Button>(R.id.btnActivateRoot).setOnClickListener {
             activateViaRoot()
@@ -264,15 +276,19 @@ class ShizukuPermissionManageActivity : BaseActivity() {
             // 顺便发通知让用户拿 RemoteInput 兜底(用户也可以选上滑通知栏输码)
             proceedWirelessDebugAfterPermission()
         }
+        btnStopShizuku.setOnClickListener { confirmStopShizuku() }
+        cbAuthorizedOnly.setOnCheckedChangeListener { _, isChecked ->
+            appListController.setAuthorizedOnly(isChecked)
+        }
         findViewById<android.widget.Button>(R.id.btnBack).setOnClickListener { finish() }
     }
 
     private fun setupListeners() {
         searchInput.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, after: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
-                filterApps(s?.toString() ?: "")
+                appListController.filter(s?.toString() ?: "")
             }
         })
         searchInput.setOnClickListener {
@@ -280,19 +296,24 @@ class ShizukuPermissionManageActivity : BaseActivity() {
             val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
             imm?.showSoftInput(searchInput, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
         }
-
-        appListAdapter.onAppCheckedChanged = { app, isChecked ->
-            applyAuthorizationChange(app, isChecked)
-        }
     }
 
-    private fun applyAuthorizationChange(app: AppItem, isChecked: Boolean) {
+    private fun applyAuthorizationChange(app: ShizukuAppListController.AppItem, isChecked: Boolean) {
         if (!app.declaresClientPermission) {
             // 这条 app 不支持 Shizuku —— 授权对它无效, 提示用户并恢复 UI, 不调 binder
             showShortToast("${app.label} 未声明 Shizuku 客户端权限, 授权开关对它无效")
             loadAuthorizedAppsAsync()
             return
         }
+        if (!isChecked) {
+            // 撤销授权走确认对话框（对齐官方 App 的 revoke 确认流程）
+            confirmRevokeAuthorization(app)
+            return
+        }
+        performAuthorizationChange(app, true)
+    }
+
+    private fun performAuthorizationChange(app: ShizukuAppListController.AppItem, isChecked: Boolean) {
         val binderAlive = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
         val checkPerm = if (binderAlive) runCatching { Shizuku.checkSelfPermission() }.getOrNull() else null
         val selfAuthorized = binderAlive && checkPerm == PackageManager.PERMISSION_GRANTED
@@ -312,13 +333,13 @@ class ShizukuPermissionManageActivity : BaseActivity() {
             showLoading(true)
             var resultMsg = ""
             val ok = withContext(Dispatchers.IO) {
-                val flagsBefore = try { Shizuku.getFlagsForUid(app.uid, 6) } catch (_: Exception) { -1 }
+                val flagsBefore = try { Shizuku.getFlagsForUid(app.uid, ShizukuFlags.MASK_PERMISSION) } catch (_: Exception) { -1 }
                 val grantOk = if (isChecked) {
                     ShizukuAuthorizationRepository.grantAuthorization(app.packageName, app.uid)
                 } else {
                     ShizukuAuthorizationRepository.revokeAuthorization(app.packageName, app.uid)
                 }
-                val flagsAfter = try { Shizuku.getFlagsForUid(app.uid, 6) } catch (_: Exception) { -1 }
+                val flagsAfter = try { Shizuku.getFlagsForUid(app.uid, ShizukuFlags.MASK_PERMISSION) } catch (_: Exception) { -1 }
                 resultMsg = "flags: $flagsBefore → $flagsAfter"
                 android.util.Log.i("ShizukuDiag", "applyAuth result: $resultMsg grantOk=$grantOk")
                 grantOk
@@ -334,80 +355,17 @@ class ShizukuPermissionManageActivity : BaseActivity() {
         }
     }
 
-    private fun confirmGrantAuthorization(app: AppItem) {
-        StableDialog.builder(this)
-            .setTitle("授予 Shizuku 权限")
-            .setMessage("确认授权 ${app.label} 使用 Shizuku 服务吗？\n\n授权后该应用将能调用 Shizuku 接口执行特权命令，请仅对可信应用操作。")
-            .setPositiveButton("授权") { _, _ ->
-                grantAndRefresh(app)
-            }
-            .setNegativeButton("取消") { _, _ ->
-                loadAuthorizedAppsAsync()
-            }
-            .setCancelable(false)
-            .showSafely(this, "Show grant auth dialog failed")
-    }
-
-    private fun grantAndRefresh(app: AppItem) {
-        lifecycleScope.launch {
-            if (isFinishing || isDestroyed) return@launch
-            showLoading(true)
-            val ok = withContext(Dispatchers.IO) {
-                runCatching {
-                    ShizukuAuthorizationRepository.grantAuthorization(
-                        app.packageName,
-                        app.uid
-                    )
-                }.getOrDefault(false)
-            }
-            if (isFinishing || isDestroyed) return@launch
-            showLoading(false)
-            if (ok) {
-                showShortToast("已授权 ${app.label}")
-                loadAuthorizedAppsAsync()
-            } else {
-                showShortToast("授权失败,请先确保 Shizuku 已激活")
-                loadAuthorizedAppsAsync()
-            }
-        }
-    }
-
-    private fun confirmRevokeAuthorization(app: AppItem) {
+    private fun confirmRevokeAuthorization(app: ShizukuAppListController.AppItem) {
         StableDialog.builder(this)
             .setTitle("取消授权")
             .setMessage("确认取消 ${app.label} 的 Shizuku 授权吗？\n\n" +
-                    "该应用下次使用 Shizuku 服务时需要重新申请授权。\n" +
-                    "为使授权变更立即生效，Shizuku 服务进程将被停止——\n" +
-                    "本 app 主页的「激活 Shizuku」按钮或下次开机自启会重新拉起服务。")
+                    "撤销后该应用将立即失去 Shizuku 访问能力（正在运行的进程会被停止），\n" +
+                    "且下次请求授权会被直接拒绝，需要在本页重新开启。")
             .setPositiveButton("取消授权") { _, _ ->
-                revokeAndRefresh(app)
+                performAuthorizationChange(app, false)
             }
             .setNegativeButton("保留", null)
             .showSafely(this, "Show revoke auth dialog failed")
-    }
-
-    private fun revokeAndRefresh(app: AppItem) {
-        lifecycleScope.launch {
-            if (isFinishing || isDestroyed) return@launch
-            showLoading(true)
-            val ok = withContext(Dispatchers.IO) {
-                runCatching {
-                    ShizukuAuthorizationRepository.revokeAuthorization(
-                        app.packageName,
-                        app.uid
-                    )
-                }.getOrDefault(false)
-            }
-            if (isFinishing || isDestroyed) return@launch
-            showLoading(false)
-            if (ok) {
-                showShortToast("已取消 ${app.label} 的授权")
-                loadAuthorizedAppsAsync()
-            } else {
-                showShortToast("取消授权失败,请先确保 Shizuku 已激活")
-                loadAuthorizedAppsAsync()
-            }
-        }
     }
 
     private fun startStatusRefresh() {
@@ -429,12 +387,14 @@ class ShizukuPermissionManageActivity : BaseActivity() {
             val serverUid = if (binderAlive) runCatching { Shizuku.getUid() }.getOrNull() else null
             val binderObj = if (binderAlive) runCatching { Shizuku.getBinder() }.getOrNull() else null
             val binderObjAlive = binderObj?.isBinderAlive == true
+            val serverVersion = if (binderAlive) runCatching { Shizuku.getVersion() }.getOrNull() else null
+            val serverPatchVersion = if (binderAlive) runCatching { Shizuku.getServerPatchVersion() }.getOrNull() else null
             val status = runCatching {
                 ShizukuRepository.getStatus(this@ShizukuPermissionManageActivity)
             }.getOrNull()
 
             // 诊断: 输出原始状态以便排查
-            android.util.Log.i("ShizukuDiag", "binderAlive=$binderAlive checkPerm=$checkPerm serverUid=$serverUid binderObjAlive=$binderObjAlive status=${status?.runningMode}")
+            android.util.Log.i("ShizukuDiag", "binderAlive=$binderAlive checkPerm=$checkPerm serverUid=$serverUid binderObjAlive=$binderObjAlive serverVersion=$serverVersion.$serverPatchVersion status=${status?.runningMode}")
 
             if (isFinishing || isDestroyed) return@withContext
 
@@ -467,15 +427,21 @@ class ShizukuPermissionManageActivity : BaseActivity() {
                     if (!binderObjAlive) append(" binderObj异常")
                     append("]")
                 }
+                // 版本号展示（对齐官方 App 状态卡）
+                val versionText = if (serverVersion != null && serverPatchVersion != null) {
+                    " v$serverVersion.$serverPatchVersion"
+                } else ""
                 val statusText = when {
                     !status.installed -> "Shizuku 未安装 · 可尝试 Root/ADB/无线调试激活$diag"
                     !status.binderAlive -> "Shizuku 未激活 · 请选择下方一种方式启动服务$diag"
-                    status.permissionGranted -> "Shizuku 已激活并已授权本应用 · 可管理其它应用授权 (${status.runningMode})$diag"
+                    status.permissionGranted -> "Shizuku 已激活并已授权本应用$versionText · 可管理其它应用授权 (${status.runningMode})$diag"
                     !status.permissionStateKnown -> "Shizuku 已启动 · 权限状态读取异常，请重启 Shizuku 后再试$diag"
                     binderAlive -> "Shizuku 已启动但本应用未授权 · 请在授权弹窗中允许本应用 (${status.runningMode})$diag"
                     else -> "Shizuku 已安装，等待服务连接$diag"
                 }
                 textShizukuStatus.text = statusText
+                btnStopShizuku.isEnabled = status.binderAlive
+                btnStopShizuku.alpha = if (status.binderAlive) 1f else 0.35f
                 if (textAuthorizedApps.text.isNullOrBlank()) {
                     textAuthorizedApps.text = "已授权应用：-"
                 }
@@ -491,9 +457,42 @@ class ShizukuPermissionManageActivity : BaseActivity() {
         }
     }
 
+    // ==================== 停止服务 ====================
+
+    private fun confirmStopShizuku() {
+        StableDialog.builder(this)
+            .setTitle("停止 Shizuku 服务")
+            .setMessage("停止后所有已授权应用将立即失去 Shizuku 访问能力。\n需要时可重新激活。")
+            .setPositiveButton("停止") { _, _ ->
+                stopShizuku()
+            }
+            .setNegativeButton("取消", null)
+            .showSafely(this, "Show stop shizuku dialog failed")
+    }
+
+    private fun stopShizuku() {
+        lifecycleScope.launch {
+            if (isFinishing || isDestroyed) return@launch
+            showLoading(true)
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { Shizuku.exit(); true }.getOrDefault(false)
+            }
+            if (isFinishing || isDestroyed) return@launch
+            showLoading(false)
+            if (ok) {
+                showShortToast("Shizuku 服务已停止")
+            } else {
+                showShortToast("停止失败，请确认 Shizuku 已激活且本应用已授权")
+            }
+            refreshShizukuStatus()
+        }
+    }
+
     // ==================== Root 激活 ====================
 
     private fun activateViaRoot() {
+        // 点击即反馈, 杜绝"点了没反应"的感知; su 授权弹窗来自 root 管理器, 不在应用界面内
+        Toast.makeText(this, "正在请求 Root 权限并启动内置 Shizuku 服务...", Toast.LENGTH_SHORT).show()
         lifecycleScope.launch {
             if (isFinishing || isDestroyed) return@launch
             showLoading(true)
@@ -591,7 +590,7 @@ class ShizukuPermissionManageActivity : BaseActivity() {
         autoDiscoverPairingPortAndPrompt()
     }
 
-    private var pairingHelper: com.HanFeng.adblocker.shizuku.WirelessDebugPairingHelper? = null
+    private var pairingHelper: moe.shizuku.manager.adb.AdbMdns? = null
     private var discoveringDialog: androidx.appcompat.app.AlertDialog? = null
 
     /**
@@ -604,10 +603,25 @@ class ShizukuPermissionManageActivity : BaseActivity() {
         if (discoveringDialog?.isShowing == true) {
             discoveringDialog?.dismiss()
         }
-        pairingHelper?.stopDiscovery()
+        pairingHelper?.stop()
 
-        val helper = com.HanFeng.adblocker.shizuku.WirelessDebugPairingHelper(this)
-        pairingHelper = helper
+        val adbMdns = moe.shizuku.manager.adb.AdbMdns(
+            this,
+            moe.shizuku.manager.adb.AdbMdns.TLS_PAIRING,
+            object : androidx.lifecycle.Observer<Int> {
+                override fun onChanged(value: Int) {
+                    if (value > 0) {
+                        runOnUiThread {
+                            if (isFinishing || isDestroyed) return@runOnUiThread
+                            discoveringDialog?.dismiss()
+                            Toast.makeText(this@ShizukuPermissionManageActivity, "已发现配对端口: $value", Toast.LENGTH_SHORT).show()
+                            promptForPairingCodeOnly("127.0.0.1", value)
+                        }
+                    }
+                }
+            }
+        )
+        pairingHelper = adbMdns
 
         // 显示「正在搜索配对端口」的进度对话框
         val progBar = android.widget.ProgressBar(this).apply {
@@ -631,30 +645,23 @@ class ShizukuPermissionManageActivity : BaseActivity() {
             .setView(container)
             .setCancelable(false)
             .setNegativeButton("取消") { _, _ ->
-                helper.stopDiscovery()
+                adbMdns.stop()
             }
             .setNeutralButton("手动输入") { _, _ ->
-                helper.stopDiscovery()
+                adbMdns.stop()
                 promptForPairingCodeAndHost()
             }
             .showSafely(this, "Show discovering dialog failed")
 
         // 启动 mDNS 发现
-        helper.startDiscovery { host, port ->
-            runOnUiThread {
-                if (isFinishing || isDestroyed) return@runOnUiThread
-                discoveringDialog?.dismiss()
-                Toast.makeText(this, "已发现配对端口: $port", Toast.LENGTH_SHORT).show()
-                promptForPairingCodeOnly(host, port)
-            }
-        }
+        adbMdns.start()
 
         // 10 秒超时退回手动模式
         Handler(Looper.getMainLooper()).postDelayed({
             if (isFinishing || isDestroyed) return@postDelayed
-            if (helper.getDiscoveredHostPort() == null) {
+            if (pairingHelper?.let { it == adbMdns } == true) {
                 discoveringDialog?.dismiss()
-                helper.stopDiscovery()
+                adbMdns.stop()
                 Toast.makeText(
                     this,
                     "未自动发现配对端口,请手动输入",
@@ -1087,49 +1094,34 @@ class ShizukuPermissionManageActivity : BaseActivity() {
         }
     }
 
-    /**
-     * 加载当前已通过 Shizuku 授权的应用列表
-     * 数据源:Shizuku server 通过 binder 事务 getApplications 返回的全部 installed packages,
-     * 再用本 app PackageManager 异步补 label/icon(避免 binder 路径加载大图标阻塞)
-     */
-    private fun loadApps() {
-        loadAuthorizedAppsAsync()
+    private fun showLoading(show: Boolean) {
+        loadingOverlay.visibility = if (show) View.VISIBLE else View.GONE
     }
 
     private fun loadAuthorizedAppsAsync() {
         authorizedLoadJob?.cancel()
         authorizedLoadJob = lifecycleScope.launch {
             loadingOverlay.visibility = View.VISIBLE
-            // 两步加载: 1) 本地 PackageManager 拿第三方 App 列表  2) Shizuku 可用时叠加授权状态
-            val result = withContext(Dispatchers.IO) {
-                loadAppListWithAuthorization()
+            val statusHint = withContext(Dispatchers.IO) {
+                appListController.load()
             }
             if (isFinishing || isDestroyed) return@launch
-            val (items, statusHint) = result
 
-            allApps.clear()
-            allApps.addAll(items)
-            filteredApps.clear()
             val currentQuery = searchInput.text?.toString().orEmpty()
             if (currentQuery.isBlank()) {
-                filteredApps.addAll(items)
-                appListAdapter.updateItems(items)
+                appListController.showAll()
             } else {
-                val q = currentQuery.lowercase().trim()
-                filteredApps.addAll(items.filter {
-                    it.label.lowercase().contains(q) || it.packageName.lowercase().contains(q)
-                })
-                appListAdapter.updateItems(filteredApps)
+                appListController.filter(currentQuery)
             }
 
-            val authorizedCount = items.count { it.isChecked }
-            textAuthorizedApps.text = "已安装应用 ${items.size} 个 · 已授权 $authorizedCount 个 $statusHint"
+            val authorizedCount = appListController.authorizedCount()
+            textAuthorizedApps.text = "已安装应用 ${appListController.itemCount()} 个 · 已授权 $authorizedCount 个 $statusHint"
 
             val selfAuthorized = ShizukuAuthorizationRepository.isServerAlive() &&
                 runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
-            appListAdapter.switchesEnabled = selfAuthorized
+            appListController.setSwitchesEnabled(selfAuthorized)
 
-            if (items.isEmpty()) {
+            if (appListController.itemCount() == 0) {
                 textAuthorizedApps.text = "无法读取已安装应用列表，请检查权限设置"
             }
 
@@ -1137,207 +1129,4 @@ class ShizukuPermissionManageActivity : BaseActivity() {
         }
     }
 
-    /**
-     * 两层加载: 基础层用 PackageManager 拿手机里所有第三方 App；
-     * 若 Shizuku 已启动且本应用已授权，再通过 binder 查询每个 App 的授权状态。
-     *
-     * @return (AppItem 列表, 状态提示文字)
-     */
-    private fun loadAppListWithAuthorization(): Pair<MutableList<AppItem>, String> {
-        val pm = packageManager
-        val result = mutableListOf<AppItem>()
-        var statusHint = ""
-        try {
-            // 基础层: 本地 PackageManager 拿所有已安装应用, 排除本 app
-            // 关键修复: 用 GET_PERMISSIONS 拉 requestedPermissions, 否则无法判断哪些 app 真支持 Shizuku
-            val localPkgs = pm.getInstalledPackages(android.content.pm.PackageManager.GET_PERMISSIONS)
-            val shizukuAlive = ShizukuAuthorizationRepository.isServerAlive()
-            val selfAuthorized = shizukuAlive &&
-                runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
-
-            if (shizukuAlive && selfAuthorized) {
-                // Shizuku 可用且本应用已授权: 查每个 app 的授权状态
-                for (pkg in localPkgs) {
-                    val pkgName = pkg.packageName ?: continue
-                    if (pkgName == packageName) continue
-                    val appInfo = pkg.applicationInfo ?: continue
-                    val uid = appInfo.uid
-                    val flags = runCatching { Shizuku.getFlagsForUid(uid, 6) }.getOrDefault(0)
-                    val isAllowed = (flags and 2) == 2
-                    val label = runCatching { appInfo.loadLabel(pm).toString() }.getOrDefault(pkgName)
-                    val icon = runCatching { appInfo.loadIcon(pm) }.getOrNull()
-                    val declared = ShizukuAuthorizationRepository.isClientPermissionDeclared(pkg)
-                    result.add(AppItem(
-                        label = label,
-                        packageName = pkgName,
-                        icon = icon,
-                        isChecked = isAllowed,
-                        isSystemApp = (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0,
-                        uid = uid,
-                        declaresClientPermission = declared
-                    ))
-                }
-                statusHint = " · Shizuku 授权表"
-            } else {
-                // Shizuku 未启动或本应用未授权: 仍展示所有第三方 App, 开关全部关闭
-                for (pkg in localPkgs) {
-                    val pkgName = pkg.packageName ?: continue
-                    if (pkgName == packageName) continue
-                    val appInfo = pkg.applicationInfo ?: continue
-                    val label = runCatching { appInfo.loadLabel(pm).toString() }.getOrDefault(pkgName)
-                    val icon = runCatching { appInfo.loadIcon(pm) }.getOrNull()
-                    val declared = ShizukuAuthorizationRepository.isClientPermissionDeclared(pkg)
-                    result.add(AppItem(
-                        label = label,
-                        packageName = pkgName,
-                        icon = icon,
-                        isChecked = false,
-                        isSystemApp = (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0,
-                        uid = appInfo.uid,
-                        declaresClientPermission = declared
-                    ))
-                }
-                statusHint = when {
-                    !shizukuAlive -> " · 请先激活 Shizuku (开关暂不可用)"
-                    else -> " · 请先授权本应用 (开关暂不可用)"
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.e(TAG, "loadAppListWithAuthorization failed: ${e.message}", e)
-        }
-        result.sortWith(
-            compareBy<AppItem> { if (it.isSystemApp) 1 else 0 }
-                .thenBy { it.label.lowercase() }
-        )
-        return result to statusHint
-    }
-
-    private fun filterApps(query: String) {
-        val q = query.lowercase().trim()
-        filteredApps.clear()
-        if (q.isEmpty()) {
-            filteredApps.addAll(allApps)
-        } else {
-            filteredApps.addAll(allApps.filter {
-                it.label.lowercase().contains(q) || it.packageName.lowercase().contains(q)
-            })
-        }
-        appListAdapter.refreshFilter(filteredApps)
-    }
-
-    private fun showLoading(show: Boolean) {
-        loadingOverlay.visibility = if (show) View.VISIBLE else View.GONE
-    }
-
-    override fun onResume() {
-        super.onResume()
-        // 关键修复: 每次回到本页都重新加载授权列表, 避免 onresume 后只加载一次导致
-        // Shizuku 激活/binder 变可用后回到页面也不刷新授权列表的问题
-        loadApps()
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        statusRefreshJob?.cancel()
-        wirelessDebugMonitorJob?.cancel()
-        authorizedLoadJob?.cancel()
-        authorizationOpJob?.cancel()
-        runCatching { Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener) }
-        pairingHelper?.stopDiscovery()
-        runCatching { unregisterReceiver(pairingCodeReceiver) }
-        // 注意:onDestroy 不取消配对通知 — 用户切到「开发者选项」页面让本 Activity onStop/onDestroy
-        // 是无线调试激活流程的常态,通知应按 setTimeoutAfter(5分钟) 自然到期,不在这里清
-    }
-
-    data class AppItem(
-        val label: String,
-        val packageName: String,
-        val icon: android.graphics.drawable.Drawable?,
-        var isChecked: Boolean,
-        val isSystemApp: Boolean = false,
-        val uid: Int = -1,
-        /** 该 app 是否在 manifest 声明了 Shizuku 客户端 permission。false = 授权开关无效, 用户会被误导。 */
-        val declaresClientPermission: Boolean = true
-    )
-
-    class AppListAdapter : ListAdapter<AppItem, AppListAdapter.ViewHolder>(DIFF) {
-        var onAppCheckedChanged: ((AppItem, Boolean) -> Unit)? = null
-        var switchesEnabled: Boolean = true
-
-        fun updateItems(newItems: List<AppItem>) {
-            submitList(newItems.toList())
-        }
-
-        fun refreshFilter(newItems: List<AppItem>) {
-            // search 过滤时使用：让 ListAdapter 做 DiffUtil 增量比对
-            submitList(newItems.toList())
-        }
-
-        override fun onCreateViewHolder(parent: android.view.ViewGroup, viewType: Int): ViewHolder {
-            val view = android.view.LayoutInflater.from(parent.context)
-                .inflate(R.layout.item_shizuku_authorized_app, parent, false)
-            return ViewHolder(view)
-        }
-
-        override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-            holder.bind(getItem(position))
-        }
-
-        inner class ViewHolder(itemView: android.view.View) : RecyclerView.ViewHolder(itemView) {
-            private val iconView: android.widget.ImageView =
-                itemView.findViewById(R.id.appIcon)
-            private val labelView: android.widget.TextView =
-                itemView.findViewById(R.id.appLabel)
-            private val pkgView: android.widget.TextView =
-                itemView.findViewById(R.id.appPackage)
-            private val revokeBtn: androidx.appcompat.widget.SwitchCompat =
-                itemView.findViewById(R.id.btnRevoke)
-
-            fun bind(item: AppItem) {
-                labelView.text = if (item.isSystemApp) "${item.label} (系统)" else item.label
-                // 未声明客户端权限的 app 即使开关打开也不生效 —— 在副标题明示提示,
-                // 避免用户以为"我点开了为什么对方还说没权限"
-                pkgView.text = if (item.declaresClientPermission) {
-                    "${item.packageName}  ·  uid=${item.uid}"
-                } else {
-                    "${item.packageName}  ·  uid=${item.uid}  ·  该 app 未声明 Shizuku 客户端权限, 授权对其无效"
-                }
-                if (item.icon != null) {
-                    iconView.setImageDrawable(item.icon)
-                } else {
-                    iconView.setImageResource(android.R.drawable.sym_def_app_icon)
-                }
-                revokeBtn.setOnCheckedChangeListener(null)
-                revokeBtn.isChecked = item.isChecked
-                // 未声明客户端权限的 app 开关禁用, 提示用户该 app 接口不支持 Shizuku
-                revokeBtn.isEnabled = switchesEnabled && item.declaresClientPermission
-                if (!item.declaresClientPermission) {
-                    revokeBtn.alpha = 0.35f
-                } else {
-                    revokeBtn.alpha = 1f
-                }
-                revokeBtn.setOnCheckedChangeListener { _, isChecked ->
-                    if (switchesEnabled && item.declaresClientPermission) {
-                        onAppCheckedChanged?.invoke(item, isChecked)
-                    }
-                }
-                itemView.setOnClickListener {
-                    if (switchesEnabled && item.declaresClientPermission) revokeBtn.toggle()
-                }
-            }
-        }
-
-        companion object {
-            private val DIFF = object : DiffUtil.ItemCallback<AppItem>() {
-                override fun areItemsTheSame(oldItem: AppItem, newItem: AppItem): Boolean =
-                    oldItem.packageName == newItem.packageName && oldItem.uid == newItem.uid
-
-                override fun areContentsTheSame(oldItem: AppItem, newItem: AppItem): Boolean =
-                    oldItem.label == newItem.label &&
-                    oldItem.isChecked == newItem.isChecked &&
-                    oldItem.icon === newItem.icon &&
-                    oldItem.isSystemApp == newItem.isSystemApp
-            }
-        }
-    }
 }

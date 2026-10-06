@@ -183,9 +183,10 @@ object TrafficDecisionEngine {
             return QuicDecision(blocked = true, reason = "general-ad-traffic")
         }
         if (input.globalMitmFullCapture && input.hasHttpsTarget && input.bypassReason == null) {
-            if (RuleRepository.isAggressiveAdAppHint(appName) || RuleRepository.isCommunityAppHint(appName) || RuleRepository.isNovelAppHint(appName)) {
-                return QuicDecision(blocked = true, reason = "global-mitm-force-tcp")
-            }
+            // 对齐 AdGuard 策略：MITM 全量捕获开启时，所有通过保护检查的 QUIC 流量
+            // 一律强制回 TCP，确保 HTTPS 内容全部进入 MITM 管线可被 URL/cosmetic 规则过滤，
+            // 关闭 QUIC 绕过导致的漏广告（QUIC 内容对 MITM 不可见）
+            return QuicDecision(blocked = true, reason = "global-mitm-force-tcp")
         }
         val shouldForceTcpFallback = input.httpDecryptEnabled && input.hasHttpsTarget && input.matchedRule != null && input.bypassReason == null
         if (input.matchedRule == null && !shouldForceTcpFallback) {
